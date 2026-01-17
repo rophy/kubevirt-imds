@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 func TestParseJWTExpiration(t *testing.T) {
@@ -355,6 +357,68 @@ func TestHandleIdentity(t *testing.T) {
 			}
 			if tt.checkBody != nil {
 				tt.checkBody(t, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestCount   int
+		burstSize      int
+		wantLastStatus int
+		wantRetryAfter string
+	}{
+		{
+			name:           "requests within limit succeed",
+			requestCount:   5,
+			burstSize:      10,
+			wantLastStatus: http.StatusOK,
+			wantRetryAfter: "",
+		},
+		{
+			name:           "requests exceeding limit get 429",
+			requestCount:   12,
+			burstSize:      10,
+			wantLastStatus: http.StatusTooManyRequests,
+			wantRetryAfter: "1",
+		},
+		{
+			name:           "exactly at limit succeeds",
+			requestCount:   10,
+			burstSize:      10,
+			wantLastStatus: http.StatusOK,
+			wantRetryAfter: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewServer("/tmp/token", "ns", "pod", "vm", "sa", ":0")
+			// Override limiter with test values (low burst for testing)
+			server.limiter = rate.NewLimiter(rate.Limit(tt.burstSize), tt.burstSize)
+
+			handler := server.rateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			var lastStatus int
+			var lastRetryAfter string
+
+			for i := 0; i < tt.requestCount; i++ {
+				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+				lastStatus = w.Code
+				lastRetryAfter = w.Header().Get("Retry-After")
+			}
+
+			if lastStatus != tt.wantLastStatus {
+				t.Errorf("last request status = %d, want %d", lastStatus, tt.wantLastStatus)
+			}
+			if lastRetryAfter != tt.wantRetryAfter {
+				t.Errorf("Retry-After = %q, want %q", lastRetryAfter, tt.wantRetryAfter)
 			}
 		})
 	}

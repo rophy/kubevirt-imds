@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // Server is the IMDS HTTP server.
@@ -24,7 +26,8 @@ type Server struct {
 	// ListenAddr is the address to listen on (default: 169.254.169.254:80)
 	ListenAddr string
 
-	server *http.Server
+	server  *http.Server
+	limiter *rate.Limiter
 }
 
 // NewServer creates a new IMDS server with the given configuration.
@@ -40,6 +43,7 @@ func NewServer(tokenPath, namespace, podName, vmName, saName, listenAddr string)
 		VMName:             vmName,
 		ServiceAccountName: saName,
 		ListenAddr:         listenAddr,
+		limiter:            rate.NewLimiter(100, 100), // 100 req/s, burst of 100
 	}
 }
 
@@ -52,7 +56,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.server = &http.Server{
 		Addr:           s.ListenAddr,
-		Handler:        s.loggingMiddleware(mux),
+		Handler:        s.loggingMiddleware(s.rateLimitMiddleware(mux)),
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   5 * time.Second,
 		IdleTimeout:    20 * time.Second,
@@ -88,5 +92,17 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+// rateLimitMiddleware enforces rate limiting (100 req/s).
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

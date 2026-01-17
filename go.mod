@@ -4,6 +4,7 @@ go 1.22.2
 
 require (
 	github.com/vishvananda/netlink v1.3.1
+	golang.org/x/time v0.3.0
 	k8s.io/api v0.31.0
 	k8s.io/apimachinery v0.31.0
 )
