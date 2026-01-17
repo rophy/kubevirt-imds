@@ -57,17 +57,12 @@ func runInit() error {
 		log.Printf("Using configured bridge: %s", bridgeName)
 	}
 
-	// Clean up any existing veth pair
-	if err := network.CleanupVeth(); err != nil {
-		log.Printf("Warning: failed to cleanup existing veth: %v", err)
+	// Ensure veth pair exists and is configured correctly
+	if err := network.EnsureVeth(bridgeName); err != nil {
+		return fmt.Errorf("failed to ensure veth: %w", err)
 	}
 
-	// Set up the veth pair
-	if err := network.SetupVeth(bridgeName); err != nil {
-		return fmt.Errorf("failed to setup veth: %w", err)
-	}
-
-	log.Printf("Successfully set up veth pair attached to bridge %s", bridgeName)
+	log.Printf("Successfully ensured veth pair attached to bridge %s", bridgeName)
 	log.Printf("IMDS will be available at %s", network.IMDSAddress)
 	return nil
 }
@@ -140,16 +135,12 @@ func runAll() error {
 		return fmt.Errorf("timed out waiting for VM bridge after %v", timeout)
 	}
 
-	// Set up veth
-	if err := network.CleanupVeth(); err != nil {
-		log.Printf("Warning: failed to cleanup existing veth: %v", err)
+	// Ensure veth pair exists and is configured correctly
+	if err := network.EnsureVeth(bridgeName); err != nil {
+		return fmt.Errorf("failed to ensure veth: %w", err)
 	}
 
-	if err := network.SetupVeth(bridgeName); err != nil {
-		return fmt.Errorf("failed to setup veth: %w", err)
-	}
-
-	log.Printf("Successfully set up veth pair attached to bridge %s", bridgeName)
+	log.Printf("Successfully ensured veth pair attached to bridge %s", bridgeName)
 
 	// Now run the server
 	return runServe()

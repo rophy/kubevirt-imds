@@ -92,3 +92,85 @@ func CleanupVeth() error {
 
 	return nil
 }
+
+// EnsureVeth validates existing veth pair or creates a new one.
+// This preserves the MAC address across restarts to avoid ARP cache issues.
+func EnsureVeth(bridgeName string) error {
+	// Get the bridge first
+	bridge, err := GetBridge(bridgeName)
+	if err != nil {
+		return err
+	}
+
+	// Check if veth already exists
+	vethIMDS, err := netlink.LinkByName(VethIMDS)
+	if err != nil {
+		// Doesn't exist, create new
+		return SetupVeth(bridgeName)
+	}
+
+	// veth exists, validate and fix if needed
+	vethBr, err := netlink.LinkByName(VethIMDSBridge)
+	if err != nil {
+		// Bridge side missing (shouldn't happen), recreate
+		CleanupVeth()
+		return SetupVeth(bridgeName)
+	}
+
+	// Check if attached to correct bridge
+	if !isAttachedToBridge(vethBr, bridge) {
+		// Wrong bridge, recreate
+		CleanupVeth()
+		return SetupVeth(bridgeName)
+	}
+
+	// Ensure IP address is configured
+	if err := ensureIPAddress(vethIMDS); err != nil {
+		return err
+	}
+
+	// Ensure both interfaces are UP
+	if err := netlink.LinkSetUp(vethBr); err != nil {
+		return fmt.Errorf("failed to bring up %s: %w", VethIMDSBridge, err)
+	}
+	if err := netlink.LinkSetUp(vethIMDS); err != nil {
+		return fmt.Errorf("failed to bring up %s: %w", VethIMDS, err)
+	}
+
+	return nil
+}
+
+// isAttachedToBridge checks if the link is attached to the specified bridge.
+func isAttachedToBridge(link netlink.Link, bridge netlink.Link) bool {
+	return link.Attrs().MasterIndex == bridge.Attrs().Index
+}
+
+// ensureIPAddress ensures the IMDS IP address is configured on the interface.
+func ensureIPAddress(link netlink.Link) error {
+	expectedAddr := &netlink.Addr{
+		IPNet: &net.IPNet{
+			IP:   net.ParseIP(IMDSAddress),
+			Mask: net.CIDRMask(32, 32),
+		},
+	}
+
+	// Check existing addresses
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return fmt.Errorf("failed to list addresses on %s: %w", link.Attrs().Name, err)
+	}
+
+	for _, addr := range addrs {
+		if addr.IP.Equal(expectedAddr.IP) {
+			// IP already configured
+			return nil
+		}
+	}
+
+	// IP not found, add it
+	if err := netlink.AddrAdd(link, expectedAddr); err != nil {
+		return fmt.Errorf("failed to add address %s to %s: %w", IMDSAddress, link.Attrs().Name, err)
+	}
+
+	return nil
+}
