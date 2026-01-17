@@ -183,8 +183,8 @@ test_basic_imds() {
     log_info "Creating test VM: ${vm_name}"
     kctl apply -f deploy/test/vm-with-imds.yaml
 
-    # Wait for VM pod (4 containers: compute, volumecontainerdisk, imds-server, guest-console-log)
-    wait_for_vm_pod "${vm_name}" 4 ${TIMEOUT_SECONDS}
+    # Wait for VM pod (3 containers: compute, volumecontainerdisk, imds-server)
+    wait_for_vm_pod "${vm_name}" 3 ${TIMEOUT_SECONDS}
 
     local pod_name
     pod_name=$(get_pod_name "${vm_name}")
@@ -229,10 +229,10 @@ test_namespace_isolation() {
 
     # Wait for both VM pods
     log_info "Waiting for VM A..."
-    wait_for_vm_pod "${vm_a}" 4 ${TIMEOUT_SECONDS}
+    wait_for_vm_pod "${vm_a}" 3 ${TIMEOUT_SECONDS}
 
     log_info "Waiting for VM B..."
-    wait_for_vm_pod "${vm_b}" 4 ${TIMEOUT_SECONDS}
+    wait_for_vm_pod "${vm_b}" 3 ${TIMEOUT_SECONDS}
 
     local pod_a pod_b
     pod_a=$(get_pod_name "${vm_a}")
@@ -296,8 +296,8 @@ test_no_traffic_leak() {
     kctl apply -f deploy/test/two-vms-isolation.yaml
 
     # Wait for both VM pods
-    wait_for_vm_pod "${vm_a}" 4 ${TIMEOUT_SECONDS}
-    wait_for_vm_pod "${vm_b}" 4 ${TIMEOUT_SECONDS}
+    wait_for_vm_pod "${vm_a}" 3 ${TIMEOUT_SECONDS}
+    wait_for_vm_pod "${vm_b}" 3 ${TIMEOUT_SECONDS}
 
     local pod_a pod_b
     pod_a=$(get_pod_name "${vm_a}")
@@ -306,67 +306,59 @@ test_no_traffic_leak() {
     # Give IMDS servers time to set up
     sleep 5
 
-    # Find the main bridge interface (kindnet uses eth0, flannel uses cni0, etc.)
-    # We'll capture on multiple common interfaces
-    log_info "Starting packet capture on node interfaces..."
+    # Start tcpdump with timeout, generate traffic, then check results
+    # We use timeout instead of -c <count> because we expect 0 packets (isolation working)
+    log_info "Starting packet capture (10s timeout) while generating traffic..."
 
-    # Start tcpdump in background, capturing on common CNI interfaces
-    # Exclude veth* since those are expected to carry pod traffic
+    # Run tcpdump with timeout in background, generate traffic, then analyze
+    # The capture runs for 10 seconds - if isolation works, it should capture 0 packets
     kctl exec -n ${TEST_NAMESPACE} network-sniffer -- sh -c '
-        tcpdump -i any -n "host 169.254.169.254" -c 100 -w /tmp/capture.pcap 2>/dev/null &
-        echo $! > /tmp/tcpdump.pid
+        rm -f /tmp/capture.pcap
+        timeout 10 tcpdump -i any -n "host 169.254.169.254" -w /tmp/capture.pcap 2>/dev/null &
+        TCPDUMP_PID=$!
+        echo "tcpdump started with PID $TCPDUMP_PID"
+        sleep 1
     '
 
-    # Give tcpdump time to start
-    sleep 2
-
-    # Generate traffic from both VMs
+    # Generate traffic from both VMs while tcpdump is running
     log_info "Generating IMDS traffic from both VMs..."
     for i in $(seq 1 20); do
         kctl exec -n ${TEST_NAMESPACE} ${pod_a} -c compute -- curl -sf http://169.254.169.254/v1/identity >/dev/null 2>&1 &
         kctl exec -n ${TEST_NAMESPACE} ${pod_b} -c compute -- curl -sf http://169.254.169.254/v1/identity >/dev/null 2>&1 &
     done
 
-    # Wait for requests to complete
+    # Wait for curl requests to complete
     wait
-    sleep 3
 
-    # Stop tcpdump
-    kctl exec -n ${TEST_NAMESPACE} network-sniffer -- sh -c 'kill $(cat /tmp/tcpdump.pid) 2>/dev/null || true'
-    sleep 1
+    # Wait for tcpdump timeout to finish
+    log_info "Waiting for packet capture to complete..."
+    sleep 10
 
-    # Analyze capture - check which interfaces saw traffic
+    # Analyze capture - count packets
     log_info "Analyzing captured packets..."
 
-    local capture_output
-    capture_output=$(kctl exec -n ${TEST_NAMESPACE} network-sniffer -- sh -c '
+    local packet_count
+    packet_count=$(kctl exec -n ${TEST_NAMESPACE} network-sniffer -- sh -c '
         if [ -f /tmp/capture.pcap ]; then
-            tcpdump -r /tmp/capture.pcap -e -n 2>/dev/null | head -50
+            tcpdump -r /tmp/capture.pcap -n 2>/dev/null | wc -l
         else
-            echo "NO_CAPTURE"
+            echo "0"
         fi
-    ' 2>/dev/null) || capture_output="NO_CAPTURE"
+    ' 2>/dev/null) || packet_count="0"
+
+    # Trim whitespace
+    packet_count=$(echo "$packet_count" | tr -d '[:space:]')
 
     local failed=0
 
-    if [ "$capture_output" = "NO_CAPTURE" ] || [ -z "$capture_output" ]; then
-        log_info "No packets captured on host network interfaces - ISOLATION CONFIRMED"
+    if [ "$packet_count" = "0" ]; then
+        log_info "0 packets captured on host network - ISOLATION CONFIRMED"
         log_info "169.254.169.254 traffic stayed within pod network namespaces"
     else
-        # Check if traffic appeared on non-veth interfaces
-        # Traffic on veth* is expected (host side of pod's veth pair)
-        local non_veth_traffic
-        non_veth_traffic=$(echo "$capture_output" | grep -v "veth" | grep -v "^$" || true)
-
-        if [ -n "$non_veth_traffic" ]; then
-            log_error "LEAK DETECTED: 169.254.169.254 traffic found on non-veth interfaces!"
-            log_error "Captured traffic:"
-            echo "$non_veth_traffic"
-            ((failed++))
-        else
-            log_info "Traffic only seen on veth interfaces (expected - host side of pod veth pairs)"
-            log_info "No traffic leaked to CNI bridge or node interfaces - ISOLATION CONFIRMED"
-        fi
+        log_error "LEAK DETECTED: ${packet_count} packets with 169.254.169.254 found on host network!"
+        log_error "Captured traffic:"
+        kctl exec -n ${TEST_NAMESPACE} network-sniffer -- tcpdump -r /tmp/capture.pcap -e -n 2>/dev/null | head -20
+        ((failed++))
     fi
 
     # Additional test: verify third-party pod cannot reach 169.254.169.254
@@ -405,15 +397,29 @@ main() {
 
     # Step 2: Deploy webhook
     log_step "Setup: Deploying webhook"
-    make generate-certs KUBE_CONTEXT="${KUBE_CONTEXT}"
+
+    # Generate certs and capture CA bundle
+    CERT_OUTPUT=$(KUBE_CONTEXT="${KUBE_CONTEXT}" ./hack/generate-certs.sh 2>&1)
+    echo "$CERT_OUTPUT"
+    CA_BUNDLE=$(echo "$CERT_OUTPUT" | grep -A1 "CA Bundle (base64):" | tail -1)
+
     kctl apply -f deploy/webhook/namespace.yaml
     kctl apply -f deploy/webhook/rbac.yaml
     kctl apply -f deploy/webhook/deployment.yaml
     kctl apply -f deploy/webhook/service.yaml
     kctl apply -f deploy/webhook/webhook.yaml
 
+    # Patch webhook with CA bundle
+    log_info "Patching webhook with CA bundle..."
+    kctl patch mutatingwebhookconfiguration imds-webhook --type='json' \
+        -p="[{\"op\": \"add\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\":\"${CA_BUNDLE}\"}]"
+
+    # Restart webhook to pick up new TLS certificate
+    log_info "Restarting webhook to pick up new certificate..."
+    kctl rollout restart deployment/imds-webhook -n kubevirt-imds
+
     log_info "Waiting for webhook to be ready..."
-    kctl wait --for=condition=Available deployment/imds-webhook -n kubevirt-imds --timeout=60s
+    kctl rollout status deployment/imds-webhook -n kubevirt-imds --timeout=60s
 
     # Run tests
     local total_failed=0

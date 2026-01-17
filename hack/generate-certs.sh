@@ -81,9 +81,9 @@ echo ""
 echo "CA Bundle (base64):"
 echo "${CA_BUNDLE}"
 echo ""
-echo "To update the webhook configuration, run:"
-echo "kubectl patch mutatingwebhookconfiguration imds-webhook --type='json' -p='[{\"op\": \"add\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\":\"${CA_BUNDLE}\"}]'"
-echo ""
+
+# Export for use by other scripts
+export IMDS_CA_BUNDLE="${CA_BUNDLE}"
 
 # Clean up
 rm -rf "${TMPDIR}"
