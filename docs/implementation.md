@@ -426,34 +426,59 @@ func TestIMDSBridgeMode(t *testing.T) {
 
 ## Implementation Phases
 
-### Phase 1: Core IMDS Server
+### Phase 1: Core IMDS Server ✅
 
-1. Implement basic HTTP server with `/healthz` endpoint
-2. Implement `/v1/token` endpoint (read from file)
-3. Implement `/v1/identity` endpoint (read from env vars)
-4. Add veth setup logic (`init` command)
-5. Build Docker image
+1. ✅ Implement basic HTTP server with `/healthz` endpoint
+2. ✅ Implement `/v1/token` endpoint (read from file)
+3. ✅ Implement `/v1/identity` endpoint (read from env vars)
+4. ✅ Add veth setup logic (`init` command)
+5. ✅ Build Docker image (scratch-based, minimal)
 
 **Deliverable**: Working IMDS server that can be manually deployed
 
-### Phase 2: Mutating Webhook
+### Phase 2: Mutating Webhook ✅
 
-1. Implement webhook server with TLS
-2. Implement pod mutation logic
-3. Add projected volume injection
-4. Add container injection
-5. Create deployment manifests
+1. ✅ Implement webhook server with TLS
+2. ✅ Implement pod mutation logic
+3. ✅ Add projected volume injection
+4. ✅ Add container injection
+5. ✅ Create deployment manifests
 
 **Deliverable**: Automatic IMDS injection via annotation
 
-### Phase 3: Testing & Polish
+### Phase 3: Testing & Polish ✅
 
-1. Unit tests for all packages
-2. E2E tests with kind + KubeVirt
-3. Documentation
-4. CI/CD pipeline
+1. ✅ Unit tests for handlers, JWT parsing, webhook mutation
+2. ✅ E2E tests with kind + KubeVirt
+3. ✅ Network isolation verification (tcpdump-based tests)
+4. ⏳ CI/CD pipeline (not yet implemented)
 
 **Deliverable**: Production-ready release
+
+## Current Status
+
+All core functionality is implemented and tested:
+
+- **IMDS Server**: Serves `/v1/token`, `/v1/identity`, `/healthz` endpoints
+- **Network Setup**: veth pair creation with smart reuse on restart (preserves MAC for ARP cache)
+- **Webhook**: Injects sidecar into virt-launcher pods with `imds.kubevirt.io/enabled: "true"`
+- **Testing**: Unit tests + E2E tests including cross-VM isolation verification
+
+## Future Work
+
+### Reliability Enhancements
+
+- [x] HTTP server hardening (MaxHeaderBytes 1KB, Read/Write timeout 5s, Idle timeout 20s)
+- [ ] Resource limits for injected sidecar container
+- [ ] Liveness/readiness probes for sidecar (if needed)
+- [ ] Enhanced health checks (verify token file, veth interface)
+
+### Features
+
+- [ ] Cloud-init metadata compatibility endpoints
+- [ ] Multiple token audiences for Vault/SPIFFE integration
+- [ ] Metrics endpoint for observability
+- [ ] Support for custom metadata injection via annotations
 
 ## Dependencies
 

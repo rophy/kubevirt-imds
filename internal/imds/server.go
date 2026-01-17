@@ -51,11 +51,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/v1/identity", s.handleIdentity)
 
 	s.server = &http.Server{
-		Addr:         s.ListenAddr,
-		Handler:      s.loggingMiddleware(mux),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		BaseContext:  func(net.Listener) context.Context { return ctx },
+		Addr:           s.ListenAddr,
+		Handler:        s.loggingMiddleware(mux),
+		ReadTimeout:    5 * time.Second,
+		WriteTimeout:   5 * time.Second,
+		IdleTimeout:    20 * time.Second,
+		MaxHeaderBytes: 1 << 10, // 1KB
+		BaseContext:    func(net.Listener) context.Context { return ctx },
 	}
 
 	// Start server in goroutine
