@@ -144,10 +144,9 @@ func (m *Mutator) createServerContainer(namespace, podName, vmName, bridgeName s
 		env = append(env, corev1.EnvVar{Name: "IMDS_BRIDGE_NAME", Value: bridgeName})
 	}
 
-	// Privileged mode is required to create veth pairs since the pod
-	// enforces runAsNonRoot: true and NET_ADMIN alone is insufficient.
-	// We must override runAsNonRoot and runAsUser at the container level.
-	privileged := true
+	// Override pod-level security context to allow NET_ADMIN to work.
+	// virt-launcher pods enforce runAsNonRoot: true and runAsUser: 107,
+	// but NET_ADMIN requires root to create veth pairs.
 	runAsNonRoot := false
 	runAsUser := int64(0)
 
@@ -158,9 +157,11 @@ func (m *Mutator) createServerContainer(namespace, podName, vmName, bridgeName s
 		Command:         []string{"/imds-server", "run"},
 		Env:             env,
 		SecurityContext: &corev1.SecurityContext{
-			Privileged:   &privileged,
 			RunAsNonRoot: &runAsNonRoot,
 			RunAsUser:    &runAsUser,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
