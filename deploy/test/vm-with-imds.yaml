@@ -2,12 +2,12 @@ apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: testvm-imds
-  annotations:
-    imds.kubevirt.io/enabled: "true"
 spec:
   runStrategy: Always
   template:
     metadata:
+      annotations:
+        imds.kubevirt.io/enabled: "true"
       labels:
         kubevirt.io/domain: testvm-imds
     spec:

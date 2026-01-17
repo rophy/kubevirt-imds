@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kubevirt/kubevirt-imds/pkg/imds"
 	"github.com/kubevirt/kubevirt-imds/pkg/network"
@@ -18,6 +19,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Commands:\n")
 		fmt.Fprintf(os.Stderr, "  init   - Set up veth pair and attach to bridge\n")
 		fmt.Fprintf(os.Stderr, "  serve  - Start IMDS HTTP server\n")
+		fmt.Fprintf(os.Stderr, "  run    - Wait for bridge, set up veth, then serve (for sidecar use)\n")
 		os.Exit(1)
 	}
 
@@ -29,6 +31,10 @@ func main() {
 	case "serve":
 		if err := runServe(); err != nil {
 			log.Fatalf("Server failed: %v", err)
+		}
+	case "run":
+		if err := runAll(); err != nil {
+			log.Fatalf("Run failed: %v", err)
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
@@ -96,6 +102,57 @@ func runServe() error {
 	}()
 
 	return server.Run(ctx)
+}
+
+// runAll waits for the bridge to be created, sets up veth, then runs the server.
+// This is the main entry point for the sidecar container.
+func runAll() error {
+	log.Println("Starting IMDS sidecar (waiting for VM bridge...)")
+
+	// Wait for the bridge to be created (with timeout)
+	bridgeName := os.Getenv("IMDS_BRIDGE_NAME")
+	timeout := 5 * time.Minute
+	pollInterval := 2 * time.Second
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		var err error
+		if bridgeName == "" {
+			bridgeName, err = network.DiscoverBridge()
+			if err == nil {
+				log.Printf("Found bridge: %s", bridgeName)
+				break
+			}
+		} else {
+			_, err = network.GetBridge(bridgeName)
+			if err == nil {
+				log.Printf("Bridge %s is ready", bridgeName)
+				break
+			}
+		}
+
+		log.Printf("Waiting for bridge... (%v)", err)
+		time.Sleep(pollInterval)
+		bridgeName = "" // Reset for next auto-detect attempt
+	}
+
+	if bridgeName == "" {
+		return fmt.Errorf("timed out waiting for VM bridge after %v", timeout)
+	}
+
+	// Set up veth
+	if err := network.CleanupVeth(); err != nil {
+		log.Printf("Warning: failed to cleanup existing veth: %v", err)
+	}
+
+	if err := network.SetupVeth(bridgeName); err != nil {
+		return fmt.Errorf("failed to setup veth: %w", err)
+	}
+
+	log.Printf("Successfully set up veth pair attached to bridge %s", bridgeName)
+
+	// Now run the server
+	return runServe()
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
