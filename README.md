@@ -81,15 +81,20 @@ spec:
 
 ### 3. Access tokens from inside the VM
 
+Connect to the VM console and use curl to access the IMDS:
+
 ```bash
-# Get ServiceAccount token
-curl -s http://169.254.169.254/v1/token | jq .
+$ virtctl console my-vm
+Successfully connected to my-vm console. The escape sequence is ^]
 
-# Get identity information
-curl -s http://169.254.169.254/v1/identity | jq .
+$ curl http://169.254.169.254/v1/identity
+{"namespace":"default","serviceAccountName":"my-service-account","vmName":"my-vm","podName":"virt-launcher-my-vm-xyz789"}
 
-# Health check
-curl -s http://169.254.169.254/healthz
+$ curl http://169.254.169.254/v1/token
+{"token":"eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk3...","expirationTimestamp":"2026-01-17T12:00:00Z"}
+
+$ curl http://169.254.169.254/healthz
+OK
 ```
 
 ## API Reference
