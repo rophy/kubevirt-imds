@@ -116,43 +116,23 @@ A Kubernetes mutating admission webhook that modifies VirtualMachine/VirtualMach
 
 #### 3. Network Configuration
 
-The sidecar must intercept traffic destined for 169.254.169.254 from the VM. The approach depends on the KubeVirt networking mode in use.
+The sidecar must intercept traffic destined for 169.254.169.254 from the VM.
 
 ##### KubeVirt Networking Modes
 
 KubeVirt supports multiple networking modes with different traffic flows:
 
-| Mode | How it Works | IMDS Challenge |
-|------|--------------|----------------|
-| **Masquerade** | VM traffic NAT'd through pod network namespace | Low - traffic passes through pod namespace |
-| **Bridge** | VM directly bridged to pod/external network | High - traffic bypasses pod namespace |
-| **SR-IOV** | Direct hardware passthrough | High - traffic bypasses pod entirely |
+| Mode | How it Works |
+|------|--------------|
+| **Masquerade** | VM traffic NAT'd through pod network namespace |
+| **Bridge** | VM directly bridged to pod/external network |
+| **SR-IOV** | Direct hardware passthrough |
 
-##### Masquerade Mode (NAT)
+All modes use a Linux bridge (e.g., `k6t-eth0`) to connect the VM's tap device to the network. The difference is what else is attached to that bridge (NAT gateway, external uplink, or SR-IOV VF).
 
-In masquerade mode, the VM gets a private IP and traffic is NAT'd:
+##### Unified veth Approach
 
-```
-VM (10.0.2.2) ──► NAT (pod namespace) ──► Pod IP ──► External
-      │
-      └──► 169.254.169.254 stays in pod namespace ✅
-```
-
-**Solution:** Simple - sidecar binds to 169.254.169.254 in pod namespace.
-
-##### Bridge Mode (Layer 2)
-
-In bridge mode, the VM is directly connected to the network via a bridge:
-
-```
-VM (192.168.1.x) ──► Bridge (k6t-eth0) ──► eth0 ──► External L2 Network
-      │
-      └──► 169.254.169.254 goes to bridge, not sidecar ❌
-```
-
-The VM's network traffic, including link-local addresses, goes directly to the bridge and bypasses the pod's network namespace. This requires special handling.
-
-**Solution:** Attach IMDS sidecar directly to the VM bridge.
+Rather than implementing mode-specific solutions, we use a unified approach: **attach a veth pair to the VM bridge**. This works for all networking modes because the bridge exists in all cases.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -161,23 +141,26 @@ The VM's network traffic, including link-local addresses, goes directly to the b
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │  Bridge (k6t-eth0)                                            │  │
 │  │       │              │                  │                     │  │
-│  │     tap0           eth0           veth-imds                   │  │
-│  │    (to VM)       (uplink)     (169.254.169.254)               │  │
+│  │     tap0         (uplink)          veth-imds-br               │  │
+│  │    (to VM)    (NAT, eth0, or VF)   (to sidecar)               │  │
 │  │       │              │                  │                     │  │
 │  └───────│──────────────│──────────────────│─────────────────────┘  │
 │          │              │                  │                        │
 │          ▼              ▼                  ▼                        │
-│  ┌──────────────┐  ┌─────────┐    ┌──────────────────────────────┐  │
-│  │  VM (guest)  │  │ External│    │  imds-sidecar                │  │
-│  │              │  │ Network │    │                              │  │
-│  │  curl 169.254│──┼─────────┼────►  IMDS Server                 │  │
-│  │  .169.254/.. │  │         │    │  listening on veth-imds      │  │
-│  └──────────────┘  └─────────┘    │  at 169.254.169.254          │  │
-│                                   └──────────────────────────────┘  │
+│  ┌──────────────┐  ┌─────────────┐  ┌────────────────────────────┐  │
+│  │  VM (guest)  │  │  External   │  │  imds-sidecar              │  │
+│  │              │  │  Network    │  │                            │  │
+│  │  curl 169.254│  │             │  │  veth-imds                 │  │
+│  │  .169.254/.. │──┼─────────────┼──►  169.254.169.254           │  │
+│  │              │  │             │  │                            │  │
+│  └──────────────┘  └─────────────┘  │  IMDS Server listening     │  │
+│                                     └────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-##### Bridge Attachment Implementation
+The VM sees `169.254.169.254` as another device on the same Layer 2 segment, regardless of which networking mode is in use.
+
+##### Implementation
 
 The IMDS sidecar init container performs these steps:
 
@@ -188,7 +171,7 @@ The IMDS sidecar init container performs these steps:
 
 2. **Attach one end to VM bridge:**
    ```bash
-   # Bridge name varies: k6t-eth0, k6t-net0, br0, etc.
+   # Bridge name varies: k6t-eth0, k6t-net0, etc.
    ip link set veth-imds-br master k6t-eth0
    ip link set veth-imds-br up
    ```
@@ -199,22 +182,13 @@ The IMDS sidecar init container performs these steps:
    ip link set veth-imds up
    ```
 
-4. **Start IMDS server listening on veth-imds**
+4. **Start IMDS server listening on veth-imds interface**
 
-This allows the VM to reach 169.254.169.254 at Layer 2, as if IMDS were another device on the same network segment.
+##### Requirements
 
-##### Requirements for Bridge Mode
-
-- **NET_ADMIN capability**: Sidecar needs permission to create veth pairs and attach to bridge
-- **Bridge name discovery**: Sidecar must discover the VM bridge name (via environment variable or detection)
+- **NET_ADMIN capability**: Required to create veth pairs and attach to bridge. This is acceptable because the sidecar is an admin component that VM workloads cannot access directly.
+- **Bridge name discovery**: Sidecar must discover the VM bridge name (via environment variable or auto-detection)
 - **Timing**: Sidecar init must run after the bridge is created but before VM starts
-
-##### Configuration Options
-
-| Annotation | Default | Description |
-|------------|---------|-------------|
-| `imds.kubevirt.io/network-mode` | `"auto"` | Network mode: `auto`, `masquerade`, or `bridge` |
-| `imds.kubevirt.io/bridge-name` | (auto-detect) | Bridge name for bridge mode (e.g., `k6t-eth0`) |
 
 ## API Design
 
@@ -374,8 +348,7 @@ spec:
 |------------|---------|-------------|
 | `imds.kubevirt.io/enabled` | `"false"` | Enable IMDS sidecar injection |
 | `imds.kubevirt.io/audience` | (none) | Default audience for tokens |
-| `imds.kubevirt.io/network-mode` | `"auto"` | Network mode: `auto`, `masquerade`, or `bridge` |
-| `imds.kubevirt.io/bridge-name` | (auto-detect) | Bridge name for bridge mode (e.g., `k6t-eth0`) |
+| `imds.kubevirt.io/bridge-name` | (auto-detect) | Override VM bridge name (e.g., `k6t-eth0`) |
 
 ## Security Considerations
 
@@ -393,10 +366,16 @@ spec:
 
 ### Sidecar Permissions
 
-The IMDS sidecar itself needs minimal permissions:
-- Read access to projected token volume (automatic)
-- TokenRequest API access only if custom audiences are needed
-- No access to Kubernetes API otherwise
+The IMDS sidecar requires:
+
+- **NET_ADMIN capability**: Required to create veth pairs and attach to the VM bridge. This is acceptable because:
+  - The sidecar is an infrastructure component, not user-accessible
+  - VM workloads can only interact via HTTP at `169.254.169.254`
+  - The virt-launcher pod already runs privileged containers for QEMU/KVM
+  - NET_ADMIN scope is limited to the pod's network namespace
+- **Read access to projected token volume**: Automatic via volume mount
+- **TokenRequest API access**: Only if custom audiences are needed
+- **No other Kubernetes API access**: Minimizes attack surface
 
 ### Comparison to Pod Security
 
