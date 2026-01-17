@@ -10,7 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/kubevirt/kubevirt-imds/pkg/webhook"
+	"github.com/kubevirt/kubevirt-imds/internal/webhook"
 )
 
 func main() {

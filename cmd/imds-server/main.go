@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kubevirt/kubevirt-imds/pkg/imds"
-	"github.com/kubevirt/kubevirt-imds/pkg/network"
+	"github.com/kubevirt/kubevirt-imds/internal/imds"
+	"github.com/kubevirt/kubevirt-imds/internal/network"
 )
 
 func main() {

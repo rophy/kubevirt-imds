@@ -11,7 +11,7 @@ kubevirt-imds/
 │   │   └── main.go
 │   └── imds-webhook/         # Mutating admission webhook
 │       └── main.go
-├── pkg/
+├── internal/
 │   ├── imds/                  # IMDS server logic
 │   │   ├── server.go          # HTTP server
 │   │   └── handlers.go        # API endpoint handlers
@@ -61,7 +61,7 @@ The sidecar container that serves the IMDS API to VMs.
 #### Key Packages
 
 ```go
-// pkg/network/veth.go
+// internal/network/veth.go
 package network
 
 // SetupVeth creates a veth pair and attaches to the bridge
@@ -72,7 +72,7 @@ func DiscoverBridge() (string, error)
 ```
 
 ```go
-// pkg/imds/server.go
+// internal/imds/server.go
 package imds
 
 type Server struct {
@@ -88,7 +88,7 @@ func (s *Server) Run(ctx context.Context) error
 ```
 
 ```go
-// pkg/imds/handlers.go
+// internal/imds/handlers.go
 package imds
 
 // GET /v1/token
@@ -127,7 +127,7 @@ Intercepts VirtualMachineInstance creation and injects the IMDS sidecar.
 #### Mutation Logic
 
 ```go
-// pkg/webhook/mutate.go
+// internal/webhook/mutate.go
 package webhook
 
 func MutatePod(pod *corev1.Pod) (*corev1.Pod, error) {
