@@ -1,6 +1,12 @@
 #!/bin/bash
 # Generate self-signed TLS certificates for the webhook
 # Usage: ./hack/generate-certs.sh
+#
+# Environment variables:
+#   KUBE_CONTEXT - kubectl context to use (optional)
+#   NAMESPACE    - namespace for the webhook (default: kubevirt-imds)
+#   SERVICE      - service name (default: imds-webhook)
+#   SECRET       - secret name (default: imds-webhook-tls)
 
 set -euo pipefail
 
@@ -8,6 +14,16 @@ NAMESPACE="${NAMESPACE:-kubevirt-imds}"
 SERVICE="${SERVICE:-imds-webhook}"
 SECRET="${SECRET:-imds-webhook-tls}"
 TMPDIR="${TMPDIR:-/tmp/imds-webhook-certs}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-}"
+
+# Wrapper for kubectl that uses explicit context if provided
+kctl() {
+    if [ -n "${KUBE_CONTEXT}" ]; then
+        kubectl --context "${KUBE_CONTEXT}" "$@"
+    else
+        kubectl "$@"
+    fi
+}
 
 # Create temp directory
 mkdir -p "${TMPDIR}"
@@ -47,14 +63,14 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
     -out server.crt -days 365 -extensions v3_req -extfile csr.conf
 
 # Create namespace if it doesn't exist
-kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kctl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kctl apply -f -
 
 # Create or update secret
-kubectl create secret tls "${SECRET}" \
+kctl create secret tls "${SECRET}" \
     --cert=server.crt \
     --key=server.key \
     --namespace="${NAMESPACE}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | kctl apply -f -
 
 # Get CA bundle for webhook configuration
 CA_BUNDLE=$(base64 < ca.crt | tr -d '\n')

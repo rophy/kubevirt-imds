@@ -6,6 +6,9 @@ IMAGE_TAG ?= latest
 SERVER_IMAGE ?= $(IMAGE_REPO):$(IMAGE_TAG)
 WEBHOOK_IMAGE ?= $(IMAGE_REPO)-webhook:$(IMAGE_TAG)
 
+# Kind cluster settings
+KIND_CLUSTER_NAME ?= kind
+
 # Build all binaries
 build: build-server build-webhook
 
@@ -30,10 +33,10 @@ docker-build-all: docker-build-server docker-build-webhook
 kind-load: kind-load-server
 
 kind-load-server: docker-build-server
-	kind load docker-image $(SERVER_IMAGE)
+	kind load docker-image $(SERVER_IMAGE) --name $(KIND_CLUSTER_NAME)
 
 kind-load-webhook: docker-build-webhook
-	kind load docker-image $(WEBHOOK_IMAGE)
+	kind load docker-image $(WEBHOOK_IMAGE) --name $(KIND_CLUSTER_NAME)
 
 kind-load-all: kind-load-server kind-load-webhook
 

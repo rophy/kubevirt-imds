@@ -1,0 +1,86 @@
+# Two VMs for testing network namespace isolation
+# Each VM should only see its own IMDS at 169.254.169.254
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: testvm-imds-a
+  namespace: kubevirt
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      annotations:
+        imds.kubevirt.io/enabled: "true"
+      labels:
+        kubevirt.io/domain: testvm-imds-a
+    spec:
+      domain:
+        devices:
+          disks:
+            - name: containerdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+        resources:
+          requests:
+            memory: 128M
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: containerdisk
+          containerDisk:
+            image: quay.io/kubevirt/cirros-container-disk-demo
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #!/bin/sh
+              echo "IMDS Test VM A"
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: testvm-imds-b
+  namespace: kubevirt
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      annotations:
+        imds.kubevirt.io/enabled: "true"
+      labels:
+        kubevirt.io/domain: testvm-imds-b
+    spec:
+      domain:
+        devices:
+          disks:
+            - name: containerdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+        resources:
+          requests:
+            memory: 128M
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: containerdisk
+          containerDisk:
+            image: quay.io/kubevirt/cirros-container-disk-demo
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #!/bin/sh
+              echo "IMDS Test VM B"

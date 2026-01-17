@@ -1,0 +1,25 @@
+# Sniffer pod to verify 169.254.169.254 traffic doesn't leak
+# Uses hostNetwork to see node-level traffic
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-sniffer
+  namespace: kubevirt
+spec:
+  hostNetwork: true
+  containers:
+    - name: sniffer
+      image: alpine:3.19
+      command:
+        - sh
+        - -c
+        - |
+          apk add --no-cache tcpdump curl
+          echo "Sniffer ready"
+          sleep infinity
+      securityContext:
+        capabilities:
+          add: ["NET_RAW", "NET_ADMIN"]
+  tolerations:
+    - operator: Exists
