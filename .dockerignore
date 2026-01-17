@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+
+# Documentation
+docs/
+*.md
+
+# Deployment manifests (not needed for build)
+deploy/
+hack/
+
+# Test artifacts
+kubevirt-*.yaml
+vm.yaml
+
+# IDE
+.idea/
+.vscode/
