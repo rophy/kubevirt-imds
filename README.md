@@ -189,6 +189,7 @@ token = get_k8s_token()
 - **No credentials stored**: Tokens are read from projected volumes managed by Kubernetes
 - **Automatic rotation**: Kubelet rotates tokens before expiry
 - **Minimal permissions**: The sidecar only needs NET_ADMIN capability to set up networking
+- **Rate limiting**: 100 requests/sec with token bucket; excess requests receive HTTP 429 with `Retry-After` header
 
 ## Development
 
