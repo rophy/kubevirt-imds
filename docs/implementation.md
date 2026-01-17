@@ -466,19 +466,21 @@ All core functionality is implemented and tested:
 
 ## Future Work
 
-### Reliability Enhancements
-
-- [x] HTTP server hardening (MaxHeaderBytes 1KB, Read/Write timeout 5s, Idle timeout 20s)
-- [ ] Resource limits for injected sidecar container
-- [ ] Liveness/readiness probes for sidecar (if needed)
-- [ ] Enhanced health checks (verify token file, veth interface)
-
-### Features
+### Potential Features
 
 - [ ] Cloud-init metadata compatibility endpoints
 - [ ] Multiple token audiences for Vault/SPIFFE integration
-- [ ] Metrics endpoint for observability
 - [ ] Support for custom metadata injection via annotations
+
+### Intentionally Omitted
+
+The following were considered but intentionally omitted to keep the sidecar minimal:
+
+- **Metrics endpoint**: Traffic is internal-only (VM to sidecar), low volume. Kubernetes-native observability (pod restarts, container status, logs) is sufficient.
+- **Structured logging**: Plain text logs via `log.Printf` are adequate for a simple sidecar.
+- **Resource limits**: Deferred; the sidecar is lightweight and unlikely to impact VM pods.
+- **Liveness/readiness probes**: No external Service routes traffic to the sidecar; if it crashes, Kubernetes restarts it automatically.
+- **Enhanced health checks**: Current `/healthz` is sufficient; over-complicating adds failure modes.
 
 ## Dependencies
 
