@@ -15,11 +15,8 @@ COPY . .
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /imds-server ./cmd/imds-server
 
-# Runtime stage
-FROM alpine:3.19
-
-# Install iproute2 for debugging (optional, can be removed for smaller image)
-RUN apk add --no-cache ca-certificates
+# Runtime stage - scratch for minimal attack surface
+FROM scratch
 
 COPY --from=builder /imds-server /imds-server
 
