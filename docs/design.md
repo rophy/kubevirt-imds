@@ -218,11 +218,6 @@ Returns information about the VM's Kubernetes identity.
 
 Returns the current ServiceAccount token.
 
-**Query Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| audience  | No       | Request token with specific audience claim |
-
 **Response:**
 ```json
 {
@@ -231,12 +226,7 @@ Returns the current ServiceAccount token.
 }
 ```
 
-**Example with audience:**
-```
-GET /v1/token?audience=vault
-```
-
-Returns a token with the `aud` claim set to `vault`, useful for services that require specific audiences.
+The `expirationTimestamp` is parsed from the JWT's `exp` claim.
 
 #### GET /healthz
 
@@ -289,31 +279,17 @@ volumes:
 The IMDS approach provides automatic token refresh:
 
 1. Kubelet rotates the projected token before expiry
-2. IMDS sidecar reads the current token on each request
+2. IMDS sidecar reads the current token on each request (no caching needed)
 3. VM always receives a valid, fresh token via HTTP
 4. No guest-side file watching or refresh logic needed
 
 This is a significant advantage over filesystem-based approaches where the guest must handle token refresh.
 
-### Custom Audiences
+### Design Decisions
 
-Some services (e.g., Vault) require tokens with specific audience claims. Two approaches:
+**No token caching:** The sidecar reads the token file on each request. Since the file is small (~1-2KB) and stored in tmpfs (memory-backed), this is effectively instant and guarantees the freshest token.
 
-1. **Static configuration**: Configure audience at VM creation time
-2. **Dynamic request**: Pass `?audience=xxx` parameter, sidecar uses TokenRequest API
-
-The TokenRequest API approach requires the sidecar to have permissions:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: imds-tokenrequest
-rules:
-  - apiGroups: [""]
-    resources: ["serviceaccounts/token"]
-    verbs: ["create"]
-```
+**No custom audience support:** The projected token uses the default Kubernetes API audience. Services like Vault can be configured to accept this audience. Dynamic audience support would require TokenRequest API permissions and adds complexity without significant benefit for most use cases.
 
 ## VM Specification
 
@@ -347,7 +323,6 @@ spec:
 | Annotation | Default | Description |
 |------------|---------|-------------|
 | `imds.kubevirt.io/enabled` | `"false"` | Enable IMDS sidecar injection |
-| `imds.kubevirt.io/audience` | (none) | Default audience for tokens |
 | `imds.kubevirt.io/bridge-name` | (auto-detect) | Override VM bridge name (e.g., `k6t-eth0`) |
 
 ## Security Considerations
@@ -429,7 +404,7 @@ TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
 
 ```bash
 # Inside VM
-TOKEN=$(curl -s "http://169.254.169.254/v1/token?audience=vault" | jq -r .token)
+TOKEN=$(curl -s "http://169.254.169.254/v1/token" | jq -r .token)
 vault write auth/kubernetes/login role="my-role" jwt="$TOKEN"
 ```
 
@@ -437,7 +412,7 @@ vault write auth/kubernetes/login role="my-role" jwt="$TOKEN"
 
 ```powershell
 # Inside VM
-$response = Invoke-RestMethod -Uri "http://169.254.169.254/v1/token?audience=vault"
+$response = Invoke-RestMethod -Uri "http://169.254.169.254/v1/token"
 vault write auth/kubernetes/login role="my-role" jwt="$($response.token)"
 ```
 
@@ -461,15 +436,12 @@ Any application can fetch tokens via HTTP:
 # Python example
 import requests
 
-def get_k8s_token(audience=None):
-    url = "http://169.254.169.254/v1/token"
-    if audience:
-        url += f"?audience={audience}"
-    response = requests.get(url)
+def get_k8s_token():
+    response = requests.get("http://169.254.169.254/v1/token")
     return response.json()["token"]
 
 # Use token to authenticate to Vault, SPIFFE, etc.
-token = get_k8s_token(audience="vault")
+token = get_k8s_token()
 ```
 
 ## Future Considerations

@@ -14,8 +14,7 @@ kubevirt-imds/
 ├── pkg/
 │   ├── imds/                  # IMDS server logic
 │   │   ├── server.go          # HTTP server
-│   │   ├── handlers.go        # API endpoint handlers
-│   │   └── token.go           # Token reading/caching
+│   │   └── handlers.go        # API endpoint handlers
 │   ├── network/               # Network setup
 │   │   ├── bridge.go          # Bridge discovery
 │   │   └── veth.go            # veth pair creation
@@ -33,7 +32,7 @@ kubevirt-imds/
 ├── hack/
 │   ├── generate-certs.sh      # Generate webhook TLS certs
 │   └── kind-config.yaml       # Kind cluster config for testing
-├── Dockerfile.server          # IMDS sidecar image
+├── Dockerfile                 # IMDS sidecar image
 ├── Dockerfile.webhook         # Webhook image
 ├── go.mod
 ├── go.sum

@@ -1,10 +1,13 @@
 package imds
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -53,10 +56,14 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Parse JWT to extract expiration time
-	// For now, we don't return expiration timestamp
+	token := strings.TrimSpace(string(tokenBytes))
 	resp := TokenResponse{
-		Token: string(tokenBytes),
+		Token: token,
+	}
+
+	// Parse JWT to extract expiration time
+	if exp, err := parseJWTExpiration(token); err == nil {
+		resp.ExpirationTimestamp = exp
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -95,4 +102,34 @@ func (s *Server) writeError(w http.ResponseWriter, status int, errCode, message 
 		Message: message,
 	}
 	s.writeJSON(w, status, resp)
+}
+
+// parseJWTExpiration extracts the expiration time from a JWT token.
+// JWTs have three base64-encoded parts separated by dots: header.payload.signature
+// The payload contains the "exp" claim as a Unix timestamp.
+func parseJWTExpiration(token string) (time.Time, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("invalid JWT format")
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	// Parse the JSON payload
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	if claims.Exp == 0 {
+		return time.Time{}, fmt.Errorf("no exp claim in token")
+	}
+
+	return time.Unix(claims.Exp, 0), nil
 }
