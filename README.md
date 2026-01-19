@@ -87,21 +87,30 @@ Connect to the VM console and use curl to access the IMDS:
 $ virtctl console my-vm
 Successfully connected to my-vm console. The escape sequence is ^]
 
-$ curl http://169.254.169.254/v1/identity
+$ curl -H "Metadata: true" http://169.254.169.254/v1/identity
 {"namespace":"default","serviceAccountName":"my-service-account","vmName":"my-vm","podName":"virt-launcher-my-vm-xyz789"}
 
-$ curl http://169.254.169.254/v1/token
+$ curl -H "Metadata: true" http://169.254.169.254/v1/token
 {"token":"eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk3...","expirationTimestamp":"2026-01-17T12:00:00Z"}
 
 $ curl http://169.254.169.254/healthz
 OK
 ```
 
+> **Note:** The `Metadata: true` header is required for `/v1/token` and `/v1/identity` endpoints (SSRF protection). The `/healthz` endpoint does not require this header.
+
 ## API Reference
+
+All endpoints except `/healthz` require the `Metadata: true` header.
 
 ### GET /v1/token
 
 Returns the ServiceAccount token.
+
+**Request:**
+```bash
+curl -H "Metadata: true" http://169.254.169.254/v1/token
+```
 
 **Response:**
 ```json
@@ -115,6 +124,11 @@ Returns the ServiceAccount token.
 
 Returns VM identity information.
 
+**Request:**
+```bash
+curl -H "Metadata: true" http://169.254.169.254/v1/identity
+```
+
 **Response:**
 ```json
 {
@@ -127,28 +141,28 @@ Returns VM identity information.
 
 ### GET /healthz
 
-Health check endpoint. Returns `OK` with status 200.
+Health check endpoint. Returns `OK` with status 200. Does not require `Metadata` header.
 
 ## Usage Examples
 
 ### Vault Authentication (Linux)
 
 ```bash
-TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 vault write auth/kubernetes/login role="my-role" jwt="$TOKEN"
 ```
 
 ### Vault Authentication (Windows PowerShell)
 
 ```powershell
-$response = Invoke-RestMethod -Uri "http://169.254.169.254/v1/token"
+$response = Invoke-RestMethod -Headers @{"Metadata"="true"} -Uri "http://169.254.169.254/v1/token"
 vault write auth/kubernetes/login role="my-role" jwt="$($response.token)"
 ```
 
 ### Kubernetes API Access
 
 ```bash
-TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 curl -s -k \
   -H "Authorization: Bearer $TOKEN" \
   https://kubernetes.default.svc/api/v1/namespaces/default/pods
@@ -160,7 +174,10 @@ curl -s -k \
 import requests
 
 def get_k8s_token():
-    response = requests.get("http://169.254.169.254/v1/token")
+    response = requests.get(
+        "http://169.254.169.254/v1/token",
+        headers={"Metadata": "true"}
+    )
     return response.json()["token"]
 
 token = get_k8s_token()
@@ -186,6 +203,7 @@ token = get_k8s_token()
 ## Security
 
 - **Link-local only**: The IMDS endpoint is only reachable from within the VM's network namespace
+- **SSRF protection**: Requires `Metadata: true` header (like Azure IMDS) to prevent server-side request forgery attacks
 - **No credentials stored**: Tokens are read from projected volumes managed by Kubernetes
 - **Automatic rotation**: Kubelet rotates tokens before expiry
 - **Minimal permissions**: The sidecar only needs NET_ADMIN capability to set up networking

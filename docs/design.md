@@ -198,6 +198,16 @@ The IMDS sidecar init container performs these steps:
 http://169.254.169.254
 ```
 
+### Required Header
+
+All requests (except `/healthz`) must include the `Metadata: true` header:
+
+```bash
+curl -H "Metadata: true" http://169.254.169.254/v1/token
+```
+
+This header is required to protect against SSRF (Server-Side Request Forgery) attacks, following the same pattern as Azure IMDS. Requests without this header receive a `400 Bad Request` response.
+
 ### Endpoints
 
 #### GET /v1/identity
@@ -249,6 +259,7 @@ Health check endpoint.
 | Status Code | Meaning |
 |-------------|---------|
 | 200 | Success |
+| 400 | Bad request (missing `Metadata: true` header) |
 | 404 | Endpoint not found |
 | 500 | Internal error (token unavailable, etc.) |
 | 503 | Service not ready |
@@ -371,31 +382,31 @@ IMDS works on any guest OS that supports:
 
 ```bash
 # Using curl
-TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 
 # Using wget
-TOKEN=$(wget -qO- http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(wget -qO- --header="Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 ```
 
 ### Windows
 
 ```powershell
 # Using PowerShell
-$response = Invoke-RestMethod -Uri "http://169.254.169.254/v1/token"
+$response = Invoke-RestMethod -Headers @{"Metadata"="true"} -Uri "http://169.254.169.254/v1/token"
 $token = $response.token
 
 # Using curl (if installed)
-$token = (curl.exe -s http://169.254.169.254/v1/token | ConvertFrom-Json).token
+$token = (curl.exe -s -H "Metadata: true" http://169.254.169.254/v1/token | ConvertFrom-Json).token
 ```
 
 ### FreeBSD / Other Unix
 
 ```sh
 # Using fetch
-TOKEN=$(fetch -qo - http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(fetch -qo - --header="Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 
 # Using curl (if installed)
-TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 ```
 
 ## Usage Examples
@@ -404,7 +415,7 @@ TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
 
 ```bash
 # Inside VM
-TOKEN=$(curl -s "http://169.254.169.254/v1/token" | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" "http://169.254.169.254/v1/token" | jq -r .token)
 vault write auth/kubernetes/login role="my-role" jwt="$TOKEN"
 ```
 
@@ -412,7 +423,7 @@ vault write auth/kubernetes/login role="my-role" jwt="$TOKEN"
 
 ```powershell
 # Inside VM
-$response = Invoke-RestMethod -Uri "http://169.254.169.254/v1/token"
+$response = Invoke-RestMethod -Headers @{"Metadata"="true"} -Uri "http://169.254.169.254/v1/token"
 vault write auth/kubernetes/login role="my-role" jwt="$($response.token)"
 ```
 
@@ -420,7 +431,7 @@ vault write auth/kubernetes/login role="my-role" jwt="$($response.token)"
 
 ```bash
 # Inside VM (Linux)
-TOKEN=$(curl -s http://169.254.169.254/v1/token | jq -r .token)
+TOKEN=$(curl -s -H "Metadata: true" http://169.254.169.254/v1/token | jq -r .token)
 APISERVER="https://kubernetes.default.svc"
 
 curl -s -k \
@@ -437,7 +448,10 @@ Any application can fetch tokens via HTTP:
 import requests
 
 def get_k8s_token():
-    response = requests.get("http://169.254.169.254/v1/token")
+    response = requests.get(
+        "http://169.254.169.254/v1/token",
+        headers={"Metadata": "true"}
+    )
     return response.json()["token"]
 
 # Use token to authenticate to Vault, SPIFFE, etc.

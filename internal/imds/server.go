@@ -56,7 +56,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.server = &http.Server{
 		Addr:           s.ListenAddr,
-		Handler:        s.loggingMiddleware(s.rateLimitMiddleware(mux)),
+		Handler:        s.loggingMiddleware(s.metadataHeaderMiddleware(s.rateLimitMiddleware(mux))),
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   5 * time.Second,
 		IdleTimeout:    20 * time.Second,
@@ -92,6 +92,27 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+// metadataHeaderMiddleware requires the "Metadata: true" header for SSRF protection.
+// This follows the same pattern as Azure IMDS.
+// The /healthz endpoint is exempt for health checks.
+func (s *Server) metadataHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow healthz without header for health probes
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check for required header
+		if r.Header.Get("Metadata") != "true" {
+			s.writeError(w, http.StatusBadRequest, "missing_header", "Metadata: true header is required")
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	})
 }
 

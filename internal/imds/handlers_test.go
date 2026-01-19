@@ -362,6 +362,85 @@ func TestHandleIdentity(t *testing.T) {
 	}
 }
 
+func TestMetadataHeaderMiddleware(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		header     string
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "request with valid header succeeds",
+			path:       "/v1/token",
+			header:     "true",
+			wantStatus: http.StatusOK,
+			wantError:  "",
+		},
+		{
+			name:       "request without header returns 400",
+			path:       "/v1/token",
+			header:     "",
+			wantStatus: http.StatusBadRequest,
+			wantError:  "missing_header",
+		},
+		{
+			name:       "request with wrong header value returns 400",
+			path:       "/v1/identity",
+			header:     "false",
+			wantStatus: http.StatusBadRequest,
+			wantError:  "missing_header",
+		},
+		{
+			name:       "healthz without header succeeds",
+			path:       "/healthz",
+			header:     "",
+			wantStatus: http.StatusOK,
+			wantError:  "",
+		},
+		{
+			name:       "healthz with header also succeeds",
+			path:       "/healthz",
+			header:     "true",
+			wantStatus: http.StatusOK,
+			wantError:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{}
+
+			handler := server.metadataHeaderMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			if tt.header != "" {
+				req.Header.Set("Metadata", tt.header)
+			}
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+
+			if tt.wantError != "" {
+				var resp ErrorResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Errorf("failed to parse error response: %v", err)
+					return
+				}
+				if resp.Error != tt.wantError {
+					t.Errorf("error = %q, want %q", resp.Error, tt.wantError)
+				}
+			}
+		})
+	}
+}
+
 func TestRateLimitMiddleware(t *testing.T) {
 	tests := []struct {
 		name           string
