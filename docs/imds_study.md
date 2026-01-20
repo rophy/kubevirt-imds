@@ -101,8 +101,8 @@ Kubernetes pods automatically receive ServiceAccount tokens at a well-known path
 |---------|---------------|------------|-------|-----|
 | Required Header | Yes (`Metadata: true`) | Yes | Yes | Yes |
 | Session Token | No | Yes (PUT first) | No | No |
-| Hop Limit | N/A (veth) | Configurable | No | No |
-| Network Isolation | Per-pod veth | Per-instance | Per-VM | Per-VM |
+| Hop Limit | N/A | Configurable | No | No |
+| Network Isolation | Per-VM | Per-instance | Per-VM | Per-VM |
 
 ### Feature Coverage Matrix
 
