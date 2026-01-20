@@ -396,7 +396,7 @@ func TestCreateServerContainer(t *testing.T) {
 		ImagePullPolicy: corev1.PullAlways,
 	})
 
-	container := mutator.createServerContainer("test-ns", "test-pod", "test-vm", "")
+	container := mutator.createServerContainer("test-ns", "test-vm", "")
 
 	// Check container name
 	if container.Name != ContainerName {

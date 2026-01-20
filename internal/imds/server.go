@@ -17,8 +17,6 @@ type Server struct {
 	TokenPath string
 	// Namespace is the Kubernetes namespace
 	Namespace string
-	// PodName is the virt-launcher pod name
-	PodName string
 	// VMName is the VirtualMachine name
 	VMName string
 	// ServiceAccountName is the ServiceAccount name
@@ -31,7 +29,7 @@ type Server struct {
 }
 
 // NewServer creates a new IMDS server with the given configuration.
-func NewServer(tokenPath, namespace, podName, vmName, saName, listenAddr string) *Server {
+func NewServer(tokenPath, namespace, vmName, saName, listenAddr string) *Server {
 	if listenAddr == "" {
 		listenAddr = "169.254.169.254:80"
 	}
@@ -39,7 +37,6 @@ func NewServer(tokenPath, namespace, podName, vmName, saName, listenAddr string)
 	return &Server{
 		TokenPath:          tokenPath,
 		Namespace:          namespace,
-		PodName:            podName,
 		VMName:             vmName,
 		ServiceAccountName: saName,
 		ListenAddr:         listenAddr,

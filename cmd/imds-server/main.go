@@ -72,7 +72,6 @@ func runServe() error {
 	// Read configuration from environment
 	tokenPath := getEnvOrDefault("IMDS_TOKEN_PATH", "/var/run/secrets/tokens/token")
 	namespace := os.Getenv("IMDS_NAMESPACE")
-	podName := os.Getenv("IMDS_POD_NAME")
 	vmName := os.Getenv("IMDS_VM_NAME")
 	saName := os.Getenv("IMDS_SA_NAME")
 	listenAddr := getEnvOrDefault("IMDS_LISTEN_ADDR", "169.254.169.254:80")
@@ -81,7 +80,7 @@ func runServe() error {
 		return fmt.Errorf("IMDS_NAMESPACE is required")
 	}
 
-	server := imds.NewServer(tokenPath, namespace, podName, vmName, saName, listenAddr)
+	server := imds.NewServer(tokenPath, namespace, vmName, saName, listenAddr)
 
 	// Set up signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

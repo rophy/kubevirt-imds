@@ -292,7 +292,6 @@ func TestHandleIdentity(t *testing.T) {
 				Namespace:          "test-namespace",
 				ServiceAccountName: "test-sa",
 				VMName:             "test-vm",
-				PodName:            "test-pod",
 			},
 			wantStatus: http.StatusOK,
 			checkBody: func(t *testing.T, body string) {
@@ -309,9 +308,6 @@ func TestHandleIdentity(t *testing.T) {
 				}
 				if resp.VMName != "test-vm" {
 					t.Errorf("vmName = %q, want %q", resp.VMName, "test-vm")
-				}
-				if resp.PodName != "test-pod" {
-					t.Errorf("podName = %q, want %q", resp.PodName, "test-pod")
 				}
 			},
 		},
@@ -474,7 +470,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := NewServer("/tmp/token", "ns", "pod", "vm", "sa", ":0")
+			server := NewServer("/tmp/token", "ns", "vm", "sa", ":0")
 			// Override limiter with test values (low burst for testing)
 			server.limiter = rate.NewLimiter(rate.Limit(tt.burstSize), tt.burstSize)
 

@@ -58,7 +58,7 @@ Kubernetes pods automatically receive ServiceAccount tokens at a well-known path
 
 | Provider | Endpoint | Required Header |
 |----------|----------|-----------------|
-| **KubeVirt IMDS** | `http://169.254.169.254` | None |
+| **KubeVirt IMDS** | `http://169.254.169.254` | `Metadata: true` |
 | **AWS** | `http://169.254.169.254/latest/` | IMDSv2: `X-aws-ec2-metadata-token` |
 | **Azure** | `http://169.254.169.254/metadata/` | `Metadata: true` |
 | **GCP** | `http://metadata.google.internal/computeMetadata/v1/` | `Metadata-Flavor: Google` |
@@ -81,7 +81,6 @@ Kubernetes pods automatically receive ServiceAccount tokens at a well-known path
 | Instance Name | `vmName` | - | `compute/name` | `instance/name` |
 | Namespace/Project | `namespace` | - | `subscriptionId` | `project/project-id` |
 | ServiceAccount | `serviceAccountName` | IAM role | Managed Identity | SA email |
-| Pod Name | `podName` | - | - | - |
 | Region/Zone | - | `placement/region` | `compute/location` | `instance/zone` |
 | Instance Type | - | `instance-type` | `compute/vmSize` | `instance/machine-type` |
 | Tags/Labels | - | `tags/instance` | `compute/tags` | `instance/attributes/` |
@@ -100,7 +99,7 @@ Kubernetes pods automatically receive ServiceAccount tokens at a well-known path
 
 | Feature | KubeVirt IMDS | AWS IMDSv2 | Azure | GCP |
 |---------|---------------|------------|-------|-----|
-| Required Header | No | Yes | Yes | Yes |
+| Required Header | Yes (`Metadata: true`) | Yes | Yes | Yes |
 | Session Token | No | Yes (PUT first) | No | No |
 | Hop Limit | N/A (veth) | Configurable | No | No |
 | Network Isolation | Per-pod veth | Per-instance | Per-VM | Per-VM |
@@ -126,95 +125,73 @@ Kubernetes pods automatically receive ServiceAccount tokens at a well-known path
 | **Pod-level isolation** | Each VM pod has its own IMDS instance |
 | **Automatic rotation** | Kubelet manages token refresh, no guest-side logic |
 | **Universal OS support** | Any OS with HTTP client works |
+| **No K8s API calls** | Zero impact on control plane, works offline |
+
+### Intentionally Omitted Features
+
+KubeVirt IMDS intentionally omits certain cloud provider features to maintain a clean VM abstraction and avoid Kubernetes API dependencies:
+
+| Omitted Feature | Cloud Providers | Reason for Omission |
+|-----------------|-----------------|---------------------|
+| Pod name | - | K8s implementation detail, not VM-relevant |
+| Pod UID / Instance ID | AWS, Azure, GCP | K8s implementation detail |
+| Node name | AWS, Azure, GCP | K8s infrastructure detail |
+| Node labels/zone | AWS, Azure, GCP | Would require K8s API calls or expose infrastructure |
+| K8s labels/annotations | - | K8s-specific metadata, not VM concept |
+| Network interfaces | AWS, Azure, GCP | Would expose K8s networking details |
+| Custom token audiences | Azure, GCP | Requires TokenRequest API calls at runtime |
+
+**Design rationale:**
+- VMs should see a VM-centric view, not Kubernetes internals
+- Avoids runtime Kubernetes API calls (zero control plane impact)
+- Reduces information leakage to potentially untrusted workloads
+- Mirrors cloud provider pattern (AWS doesn't expose hypervisor details)
 
 ## Recommendations
 
-### Priority 1: Security Hardening
+### ~~Priority 1: Security Hardening~~ ✅ Implemented
 
-**Add required header validation**
+**Required header validation**
 
-Cloud providers require a header to prevent SSRF attacks where an attacker tricks a service into making requests to the metadata endpoint.
+All requests (except `/healthz`) now require the `Metadata: true` header, following the Azure IMDS pattern. This protects against SSRF attacks.
 
-```
-Current:  curl http://169.254.169.254/v1/token
-Proposed: curl -H "Metadata: true" http://169.254.169.254/v1/token
-```
-
-Implementation: Return `400 Bad Request` if `Metadata: true` header is missing.
-
-### Priority 2: Extended Identity Metadata
-
-**Add `/v1/metadata` endpoint**
-
-Expose additional VM information to match cloud provider capabilities:
-
-```json
-{
-  "instanceId": "vmi-abc123",
-  "hostname": "my-app-vm",
-  "zone": "rack-1",
-  "nodeSelector": {
-    "topology.kubernetes.io/zone": "zone-a"
-  },
-  "labels": {
-    "app": "my-app",
-    "env": "production"
-  },
-  "annotations": {
-    "custom.io/key": "value"
-  }
-}
+```bash
+curl -H "Metadata: true" http://169.254.169.254/v1/token
 ```
 
-### Priority 3: Cloud-Init Compatibility
+### Future Considerations
 
-**Add user-data endpoints**
+The following features may be considered in the future, but require careful design to maintain the VM abstraction and avoid K8s API dependencies:
 
-Support cloud-init bootstrap for standard cloud images:
+#### Cloud-Init Compatibility
+
+User-data endpoints for cloud-init bootstrap:
 
 ```
 GET /openstack/latest/meta_data.json
 GET /openstack/latest/user_data
-GET /openstack/latest/network_data.json
 ```
 
-This enables standard cloud images (Ubuntu, CentOS, etc.) to initialize without NoCloud ISO.
+This could enable standard cloud images to initialize without NoCloud ISO. Would require webhook to inject user-data from VM annotations at pod creation time (no runtime API calls).
 
-### Priority 4: Custom Token Audiences
+#### Attested Identity
 
-**Support audience parameter**
-
-Allow requesting tokens for specific audiences:
-
-```
-GET /v1/token?audience=vault
-GET /v1/token?audience=https://my-service.example.com
-```
-
-Requires TokenRequest API permissions but enables multi-service authentication.
-
-### Priority 5: Attested Identity
-
-**Add signed identity document**
-
-Provide cryptographically signed identity for verification:
+Cryptographically signed identity documents:
 
 ```
 GET /v1/identity/document  -> JSON identity document
 GET /v1/identity/signature -> Base64 signature
-GET /v1/identity/pkcs7     -> PKCS7 signed document
 ```
 
-Enables third parties to verify VM identity without trusting the token directly.
+Would enable third parties to verify VM identity. Requires design for key management without runtime API access.
 
 ### Implementation Roadmap
 
-| Phase | Features | Complexity |
-|-------|----------|------------|
-| **Phase 1** | Required header, `/v1/metadata` | Low |
-| **Phase 2** | User-data endpoints (cloud-init) | Medium |
-| **Phase 3** | Custom audiences | Medium |
-| **Phase 4** | Attested identity | High |
+| Phase | Features | Status |
+|-------|----------|--------|
+| **Phase 1** | Required header | ✅ Done |
+| **Phase 2** | Cloud-init user-data | Future |
+| **Phase 3** | Attested identity | Future |
 
 ## References
 

@@ -93,7 +93,7 @@ func (m *Mutator) Mutate(pod *corev1.Pod) ([]PatchOperation, error) {
 	// Add IMDS server container (runs init then serve in sequence)
 	// We don't use an init container because the VM bridge (k6t-*) is created
 	// by the compute container, which runs after init containers.
-	serverContainer := m.createServerContainer(pod.Namespace, pod.Name, vmName, bridgeName)
+	serverContainer := m.createServerContainer(pod.Namespace, vmName, bridgeName)
 	patches = append(patches, addContainer(pod, serverContainer))
 
 	// Add injected annotation
@@ -124,11 +124,10 @@ func (m *Mutator) createTokenVolume() corev1.Volume {
 
 // createServerContainer creates the IMDS server container
 // The container runs "run" command which waits for the bridge, sets up veth, then serves HTTP.
-func (m *Mutator) createServerContainer(namespace, podName, vmName, bridgeName string) corev1.Container {
+func (m *Mutator) createServerContainer(namespace, vmName, bridgeName string) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: "IMDS_TOKEN_PATH", Value: DefaultTokenPath},
 		{Name: "IMDS_NAMESPACE", Value: namespace},
-		{Name: "IMDS_POD_NAME", Value: podName},
 		{Name: "IMDS_VM_NAME", Value: vmName},
 		{
 			Name: "IMDS_SA_NAME",

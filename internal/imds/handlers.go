@@ -22,7 +22,6 @@ type IdentityResponse struct {
 	Namespace          string `json:"namespace"`
 	ServiceAccountName string `json:"serviceAccountName"`
 	VMName             string `json:"vmName"`
-	PodName            string `json:"podName"`
 }
 
 // ErrorResponse is the response for errors
@@ -80,7 +79,6 @@ func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
 		Namespace:          s.Namespace,
 		ServiceAccountName: s.ServiceAccountName,
 		VMName:             s.VMName,
-		PodName:            s.PodName,
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)

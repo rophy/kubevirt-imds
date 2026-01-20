@@ -88,7 +88,7 @@ $ virtctl console my-vm
 Successfully connected to my-vm console. The escape sequence is ^]
 
 $ curl -H "Metadata: true" http://169.254.169.254/v1/identity
-{"namespace":"default","serviceAccountName":"my-service-account","vmName":"my-vm","podName":"virt-launcher-my-vm-xyz789"}
+{"namespace":"default","serviceAccountName":"my-service-account","vmName":"my-vm"}
 
 $ curl -H "Metadata: true" http://169.254.169.254/v1/token
 {"token":"eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk3...","expirationTimestamp":"2026-01-17T12:00:00Z"}
@@ -122,7 +122,7 @@ curl -H "Metadata: true" http://169.254.169.254/v1/token
 
 ### GET /v1/identity
 
-Returns VM identity information.
+Returns VM identity information. Only VM-relevant fields are exposed; Kubernetes implementation details are hidden.
 
 **Request:**
 ```bash
@@ -134,8 +134,7 @@ curl -H "Metadata: true" http://169.254.169.254/v1/identity
 {
   "namespace": "default",
   "serviceAccountName": "my-service-account",
-  "vmName": "my-vm",
-  "podName": "virt-launcher-my-vm-abc123"
+  "vmName": "my-vm"
 }
 ```
 

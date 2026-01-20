@@ -39,9 +39,41 @@ Neither method provides a universal, cross-platform solution with token refresh 
 
 - Full AWS/Azure/GCP IMDS API compatibility
 - Cloud-init metadata (userdata, network config) - may be added later
-- Node-level metadata exposure
 - Multi-tenancy within a single VM
 - Filesystem-based token mounting (virtiofs) - out of scope due to OS compatibility issues
+
+## Design Principles
+
+### VM Abstraction Over Kubernetes Details
+
+KubeVirt IMDS intentionally presents a **VM-centric view**, hiding Kubernetes implementation details from the guest. This mirrors how cloud providers expose instance metadata without revealing their internal infrastructure.
+
+| Expose (VM-relevant) | Hide (K8s implementation) |
+|---------------------|---------------------------|
+| VM name | Pod name, Pod UID |
+| VM namespace | Node name, Node labels |
+| ServiceAccount name | Kubernetes labels/annotations |
+| ServiceAccount token | Pod IP, container details |
+
+**Rationale:**
+- VMs should not depend on Kubernetes-specific concepts
+- Reduces information leakage to potentially untrusted workloads
+- Maintains abstraction if underlying implementation changes
+- Aligns with cloud provider IMDS patterns (AWS doesn't expose hypervisor details)
+
+### No Kubernetes API Calls at Runtime
+
+The IMDS sidecar intentionally avoids calling the Kubernetes API at runtime:
+
+- **Token source**: Read from projected volume (kubelet-managed)
+- **Identity data**: Injected as environment variables at pod creation
+- **No watches or polling**: All data is static or file-based
+
+**Benefits:**
+- Zero impact on Kubernetes control plane
+- Works even if API server is unreachable
+- No RBAC permissions needed beyond projected token
+- Predictable latency (no network calls)
 
 ## Architecture
 
@@ -212,15 +244,14 @@ This header is required to protect against SSRF (Server-Side Request Forgery) at
 
 #### GET /v1/identity
 
-Returns information about the VM's Kubernetes identity.
+Returns information about the VM's identity. Only VM-relevant fields are exposed; Kubernetes implementation details (pod name, node name, labels) are intentionally hidden.
 
 **Response:**
 ```json
 {
   "namespace": "default",
   "serviceAccountName": "my-app-sa",
-  "vmName": "my-app-vm",
-  "podName": "virt-launcher-my-app-vm-abc123"
+  "vmName": "my-app-vm"
 }
 ```
 
