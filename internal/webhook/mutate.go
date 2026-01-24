@@ -14,6 +14,8 @@ const (
 	AnnotationBridgeName = "imds.kubevirt.io/bridge-name"
 	// AnnotationInjected marks that IMDS has been injected
 	AnnotationInjected = "imds.kubevirt.io/injected"
+	// AnnotationUserData is the annotation for cloud-init user-data
+	AnnotationUserData = "imds.kubevirt.io/user-data"
 
 	// Container and volume names
 	ContainerName   = "imds-server"
@@ -80,10 +82,12 @@ func (m *Mutator) Mutate(pod *corev1.Pod) ([]PatchOperation, error) {
 	// Get VM name from label
 	vmName := pod.Labels["kubevirt.io/domain"]
 
-	// Get bridge name override if specified
+	// Get optional configuration from annotations
 	bridgeName := ""
+	userData := ""
 	if pod.Annotations != nil {
 		bridgeName = pod.Annotations[AnnotationBridgeName]
+		userData = pod.Annotations[AnnotationUserData]
 	}
 
 	// Add projected ServiceAccount token volume
@@ -93,7 +97,7 @@ func (m *Mutator) Mutate(pod *corev1.Pod) ([]PatchOperation, error) {
 	// Add IMDS server container (runs init then serve in sequence)
 	// We don't use an init container because the VM bridge (k6t-*) is created
 	// by the compute container, which runs after init containers.
-	serverContainer := m.createServerContainer(pod.Namespace, vmName, bridgeName)
+	serverContainer := m.createServerContainer(pod.Namespace, vmName, bridgeName, userData)
 	patches = append(patches, addContainer(pod, serverContainer))
 
 	// Add injected annotation
@@ -124,7 +128,7 @@ func (m *Mutator) createTokenVolume() corev1.Volume {
 
 // createServerContainer creates the IMDS server container
 // The container runs "run" command which waits for the bridge, sets up veth, then serves HTTP.
-func (m *Mutator) createServerContainer(namespace, vmName, bridgeName string) corev1.Container {
+func (m *Mutator) createServerContainer(namespace, vmName, bridgeName, userData string) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: "IMDS_TOKEN_PATH", Value: DefaultTokenPath},
 		{Name: "IMDS_NAMESPACE", Value: namespace},
@@ -141,6 +145,10 @@ func (m *Mutator) createServerContainer(namespace, vmName, bridgeName string) co
 
 	if bridgeName != "" {
 		env = append(env, corev1.EnvVar{Name: "IMDS_BRIDGE_NAME", Value: bridgeName})
+	}
+
+	if userData != "" {
+		env = append(env, corev1.EnvVar{Name: "IMDS_USER_DATA", Value: userData})
 	}
 
 	// Override pod-level security context to allow NET_ADMIN to work.

@@ -23,13 +23,15 @@ type Server struct {
 	ServiceAccountName string
 	// ListenAddr is the address to listen on (default: 169.254.169.254:80)
 	ListenAddr string
+	// UserData is the cloud-init user-data content (optional)
+	UserData string
 
 	server  *http.Server
 	limiter *rate.Limiter
 }
 
 // NewServer creates a new IMDS server with the given configuration.
-func NewServer(tokenPath, namespace, vmName, saName, listenAddr string) *Server {
+func NewServer(tokenPath, namespace, vmName, saName, listenAddr, userData string) *Server {
 	if listenAddr == "" {
 		listenAddr = "169.254.169.254:80"
 	}
@@ -40,6 +42,7 @@ func NewServer(tokenPath, namespace, vmName, saName, listenAddr string) *Server 
 		VMName:             vmName,
 		ServiceAccountName: saName,
 		ListenAddr:         listenAddr,
+		UserData:           userData,
 		limiter:            rate.NewLimiter(100, 100), // 100 req/s, burst of 100
 	}
 }
@@ -50,6 +53,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/v1/token", s.handleToken)
 	mux.HandleFunc("/v1/identity", s.handleIdentity)
+	// NoCloud cloud-init endpoints
+	mux.HandleFunc("/v1/meta-data", s.handleMetaData)
+	mux.HandleFunc("/v1/user-data", s.handleUserData)
+	mux.HandleFunc("/v1/network-config", s.handleNetworkConfig)
 
 	s.server = &http.Server{
 		Addr:           s.ListenAddr,
@@ -94,11 +101,20 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 
 // metadataHeaderMiddleware requires the "Metadata: true" header for SSRF protection.
 // This follows the same pattern as Azure IMDS.
-// The /healthz endpoint is exempt for health checks.
+// Exempt endpoints: /healthz (health probes), /v1/meta-data, /v1/user-data, /v1/network-config
+// (cloud-init NoCloud datasource cannot send custom headers).
 func (s *Server) metadataHeaderMiddleware(next http.Handler) http.Handler {
+	// Paths exempt from header requirement
+	exemptPaths := map[string]bool{
+		"/healthz":           true,
+		"/v1/meta-data":      true,
+		"/v1/user-data":      true,
+		"/v1/network-config": true,
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow healthz without header for health probes
-		if r.URL.Path == "/healthz" {
+		// Allow exempt paths without header
+		if exemptPaths[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}

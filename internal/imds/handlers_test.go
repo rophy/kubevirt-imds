@@ -437,6 +437,215 @@ func TestMetadataHeaderMiddleware(t *testing.T) {
 	}
 }
 
+func TestHandleMetaData(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		server     *Server
+		wantStatus int
+		checkBody  func(t *testing.T, body string)
+	}{
+		{
+			name:   "GET request returns meta-data",
+			method: http.MethodGet,
+			server: &Server{
+				Namespace: "test-ns",
+				VMName:    "test-vm",
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				expected := "instance-id: test-ns-test-vm\nlocal-hostname: test-vm\n"
+				if body != expected {
+					t.Errorf("body = %q, want %q", body, expected)
+				}
+			},
+		},
+		{
+			name:   "GET request with empty values",
+			method: http.MethodGet,
+			server: &Server{
+				Namespace: "",
+				VMName:    "",
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				expected := "instance-id: -\nlocal-hostname: \n"
+				if body != expected {
+					t.Errorf("body = %q, want %q", body, expected)
+				}
+			},
+		},
+		{
+			name:       "POST request returns method not allowed",
+			method:     http.MethodPost,
+			server:     &Server{},
+			wantStatus: http.StatusMethodNotAllowed,
+			checkBody:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/v1/meta-data", nil)
+			w := httptest.NewRecorder()
+
+			tt.server.handleMetaData(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("handleMetaData() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleUserData(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		server     *Server
+		wantStatus int
+		checkBody  func(t *testing.T, body string)
+	}{
+		{
+			name:   "GET request returns user-data when configured",
+			method: http.MethodGet,
+			server: &Server{
+				UserData: "#cloud-config\nhostname: test-vm\n",
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				expected := "#cloud-config\nhostname: test-vm\n"
+				if body != expected {
+					t.Errorf("body = %q, want %q", body, expected)
+				}
+			},
+		},
+		{
+			name:   "GET request returns 404 when not configured",
+			method: http.MethodGet,
+			server: &Server{
+				UserData: "",
+			},
+			wantStatus: http.StatusNotFound,
+			checkBody:  nil,
+		},
+		{
+			name:       "POST request returns method not allowed",
+			method:     http.MethodPost,
+			server:     &Server{UserData: "test"},
+			wantStatus: http.StatusMethodNotAllowed,
+			checkBody:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/v1/user-data", nil)
+			w := httptest.NewRecorder()
+
+			tt.server.handleUserData(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("handleUserData() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleNetworkConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		wantStatus int
+	}{
+		{
+			name:       "GET request returns 404",
+			method:     http.MethodGet,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "POST request returns method not allowed",
+			method:     http.MethodPost,
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{}
+			req := httptest.NewRequest(tt.method, "/v1/network-config", nil)
+			w := httptest.NewRecorder()
+
+			server.handleNetworkConfig(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("handleNetworkConfig() status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestMetadataHeaderMiddleware_NoCloudExempt(t *testing.T) {
+	// Test that NoCloud endpoints are exempt from header requirement
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{
+			name:       "/v1/meta-data is exempt",
+			path:       "/v1/meta-data",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "/v1/user-data is exempt",
+			path:       "/v1/user-data",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "/v1/network-config is exempt",
+			path:       "/v1/network-config",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "/v1/token still requires header",
+			path:       "/v1/token",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "/v1/identity still requires header",
+			path:       "/v1/identity",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{}
+
+			handler := server.metadataHeaderMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			// Request WITHOUT Metadata header
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
 func TestRateLimitMiddleware(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -470,7 +679,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := NewServer("/tmp/token", "ns", "vm", "sa", ":0")
+			server := NewServer("/tmp/token", "ns", "vm", "sa", ":0", "")
 			// Override limiter with test values (low burst for testing)
 			server.limiter = rate.NewLimiter(rate.Limit(tt.burstSize), tt.burstSize)
 

@@ -102,6 +102,55 @@ func (s *Server) writeError(w http.ResponseWriter, status int, errCode, message 
 	s.writeJSON(w, status, resp)
 }
 
+// handleMetaData handles GET /v1/meta-data (NoCloud cloud-init datasource)
+// Returns YAML-formatted instance metadata with instance-id and local-hostname.
+func (s *Server) handleMetaData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Generate instance-id: namespace-vmname for cluster-wide uniqueness
+	instanceID := fmt.Sprintf("%s-%s", s.Namespace, s.VMName)
+
+	// NoCloud meta-data format (YAML)
+	metaData := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", instanceID, s.VMName)
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(metaData))
+}
+
+// handleUserData handles GET /v1/user-data (NoCloud cloud-init datasource)
+// Returns raw cloud-config or shell script user-data if configured.
+func (s *Server) handleUserData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.UserData == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(s.UserData))
+}
+
+// handleNetworkConfig handles GET /v1/network-config (NoCloud cloud-init datasource)
+// Returns 404 to indicate no network config; cloud-init will fall back to DHCP.
+func (s *Server) handleNetworkConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Return 404 - cloud-init will fall back to DHCP
+	http.NotFound(w, r)
+}
+
 // parseJWTExpiration extracts the expiration time from a JWT token.
 // JWTs have three base64-encoded parts separated by dots: header.payload.signature
 // The payload contains the "exp" claim as a Unix timestamp.

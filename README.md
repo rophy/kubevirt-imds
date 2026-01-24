@@ -101,7 +101,7 @@ OK
 
 ## API Reference
 
-All endpoints except `/healthz` require the `Metadata: true` header.
+Endpoints require the `Metadata: true` header except `/healthz` and cloud-init endpoints (`/v1/meta-data`, `/v1/user-data`, `/v1/network-config`).
 
 ### GET /v1/token
 
@@ -141,6 +141,68 @@ curl -H "Metadata: true" http://169.254.169.254/v1/identity
 ### GET /healthz
 
 Health check endpoint. Returns `OK` with status 200. Does not require `Metadata` header.
+
+### Cloud-Init Endpoints (NoCloud)
+
+These endpoints support cloud-init's NoCloud datasource. They do NOT require the `Metadata: true` header.
+
+#### GET /v1/meta-data
+
+Returns instance metadata in YAML format.
+
+**Response:**
+```yaml
+instance-id: default-my-vm
+local-hostname: my-vm
+```
+
+#### GET /v1/user-data
+
+Returns cloud-init user-data if configured via annotation. Returns 404 if not configured.
+
+#### GET /v1/network-config
+
+Returns 404 (cloud-init falls back to DHCP).
+
+## Cloud-Init Support
+
+KubeVirt IMDS supports cloud-init via the NoCloud datasource, enabling standard cloud images to initialize automatically.
+
+### Configuration
+
+1. Set the DMI serial in your VM spec to point cloud-init at IMDS:
+
+```yaml
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: my-vm
+spec:
+  template:
+    metadata:
+      annotations:
+        imds.kubevirt.io/enabled: "true"
+        imds.kubevirt.io/user-data: |
+          #cloud-config
+          users:
+            - name: admin
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              ssh_authorized_keys:
+                - ssh-rsa AAAA...
+    spec:
+      domain:
+        firmware:
+          serial: "ds=nocloud;s=http://169.254.169.254/v1/"
+        # ... rest of spec
+```
+
+2. Use a cloud image (Ubuntu Cloud, CentOS GenericCloud, etc.) that has cloud-init pre-installed.
+
+3. On first boot, cloud-init will:
+   - Detect NoCloud datasource via DMI serial
+   - Fetch metadata from `http://169.254.169.254/v1/meta-data`
+   - Fetch user-data from `http://169.254.169.254/v1/user-data`
+   - Apply the configuration (create users, run scripts, etc.)
 
 ## Usage Examples
 
@@ -189,6 +251,7 @@ token = get_k8s_token()
 |------------|---------|-------------|
 | `imds.kubevirt.io/enabled` | `"false"` | Enable IMDS sidecar injection |
 | `imds.kubevirt.io/bridge-name` | (auto-detect) | Override VM bridge name |
+| `imds.kubevirt.io/user-data` | (none) | Cloud-init user-data content |
 
 ## How It Works
 

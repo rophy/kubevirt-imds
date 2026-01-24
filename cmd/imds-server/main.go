@@ -75,12 +75,13 @@ func runServe() error {
 	vmName := os.Getenv("IMDS_VM_NAME")
 	saName := os.Getenv("IMDS_SA_NAME")
 	listenAddr := getEnvOrDefault("IMDS_LISTEN_ADDR", "169.254.169.254:80")
+	userData := os.Getenv("IMDS_USER_DATA")
 
 	if namespace == "" {
 		return fmt.Errorf("IMDS_NAMESPACE is required")
 	}
 
-	server := imds.NewServer(tokenPath, namespace, vmName, saName, listenAddr)
+	server := imds.NewServer(tokenPath, namespace, vmName, saName, listenAddr, userData)
 
 	// Set up signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

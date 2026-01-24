@@ -232,13 +232,21 @@ http://169.254.169.254
 
 ### Required Header
 
-All requests (except `/healthz`) must include the `Metadata: true` header:
+Most endpoints require the `Metadata: true` header:
 
 ```bash
 curl -H "Metadata: true" http://169.254.169.254/v1/token
 ```
 
 This header is required to protect against SSRF (Server-Side Request Forgery) attacks, following the same pattern as Azure IMDS. Requests without this header receive a `400 Bad Request` response.
+
+**Exempt endpoints** (no header required):
+- `/healthz` — health checks
+- `/v1/meta-data` — cloud-init metadata
+- `/v1/user-data` — cloud-init user-data
+- `/v1/network-config` — cloud-init network config
+
+Cloud-init endpoints are exempt because cloud-init cannot send custom headers when fetching from HTTP datasources.
 
 ### Endpoints
 
@@ -277,6 +285,30 @@ Health check endpoint.
 ```
 200 OK
 ```
+
+#### GET /v1/meta-data (NoCloud)
+
+Returns instance metadata for cloud-init NoCloud datasource.
+
+**Response:**
+```yaml
+instance-id: default-my-vm
+local-hostname: my-vm
+```
+
+The `instance-id` is formatted as `namespace-vmName` for cluster-wide uniqueness.
+
+#### GET /v1/user-data (NoCloud)
+
+Returns cloud-init user-data if configured via the `imds.kubevirt.io/user-data` annotation.
+
+**Response:** Raw cloud-config or shell script content, or `404 Not Found` if not configured.
+
+#### GET /v1/network-config (NoCloud)
+
+Returns network configuration for cloud-init.
+
+**Response:** `404 Not Found` (cloud-init falls back to DHCP).
 
 ### Error Responses
 
