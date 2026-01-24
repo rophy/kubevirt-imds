@@ -216,9 +216,19 @@ func addLinkLocalRoute(link netlink.Link) error {
 	return nil
 }
 
-// DiscoverVMMAC finds the VM's MAC address by looking for the tap device on the bridge.
-// KubeVirt creates tap devices with names like "tap<hash>" for VM network interfaces.
+// DiscoverVMMAC finds the VM's MAC address.
+// For masquerade mode: VM uses pod's eth0 MAC (not tap device MAC)
+// For bridge mode: VM uses tap device MAC
+// This function tries eth0 first (masquerade), then falls back to tap device (bridge).
 func DiscoverVMMAC(bridgeName string) (net.HardwareAddr, error) {
+	// First try to get pod's eth0 MAC (for masquerade mode)
+	// In masquerade mode, the VM uses the same MAC as pod's eth0
+	eth0, err := netlink.LinkByName("eth0")
+	if err == nil && len(eth0.Attrs().HardwareAddr) > 0 {
+		return eth0.Attrs().HardwareAddr, nil
+	}
+
+	// Fall back to tap device MAC (for bridge mode)
 	bridge, err := netlink.LinkByName(bridgeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bridge %s: %w", bridgeName, err)
@@ -244,7 +254,7 @@ func DiscoverVMMAC(bridgeName string) (net.HardwareAddr, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no tap device found on bridge %s", bridgeName)
+	return nil, fmt.Errorf("no VM MAC found (tried eth0 and tap device on bridge %s)", bridgeName)
 }
 
 // configureSysctl sets sysctl parameters needed for IMDS traffic from VMs.

@@ -146,7 +146,9 @@ func runAll() error {
 
 	log.Printf("Successfully ensured veth pair attached to bridge %s", bridgeName)
 
-	// Discover VM's MAC address from the tap device on the bridge
+	// Discover VM's MAC address
+	// For masquerade mode: uses pod's eth0 MAC (VM shares this MAC)
+	// For bridge mode: uses tap device MAC
 	vmMAC, err := network.DiscoverVMMAC(bridgeName)
 	if err != nil {
 		return fmt.Errorf("failed to discover VM MAC: %w", err)
