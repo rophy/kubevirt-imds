@@ -67,22 +67,8 @@ func runInit() error {
 	return nil
 }
 
-// runServe starts the IMDS HTTP server.
+// runServe starts the IMDS HTTP server with its own signal handling.
 func runServe() error {
-	// Read configuration from environment
-	tokenPath := getEnvOrDefault("IMDS_TOKEN_PATH", "/var/run/secrets/tokens/token")
-	namespace := os.Getenv("IMDS_NAMESPACE")
-	vmName := os.Getenv("IMDS_VM_NAME")
-	saName := os.Getenv("IMDS_SA_NAME")
-	listenAddr := getEnvOrDefault("IMDS_LISTEN_ADDR", "169.254.169.254:80")
-	userData := os.Getenv("IMDS_USER_DATA")
-
-	if namespace == "" {
-		return fmt.Errorf("IMDS_NAMESPACE is required")
-	}
-
-	server := imds.NewServer(tokenPath, namespace, vmName, saName, listenAddr, userData)
-
 	// Set up signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -96,6 +82,24 @@ func runServe() error {
 		cancel()
 	}()
 
+	return runServeWithContext(ctx)
+}
+
+// runServeWithContext starts the IMDS HTTP server with the provided context.
+func runServeWithContext(ctx context.Context) error {
+	// Read configuration from environment
+	tokenPath := getEnvOrDefault("IMDS_TOKEN_PATH", "/var/run/secrets/tokens/token")
+	namespace := os.Getenv("IMDS_NAMESPACE")
+	vmName := os.Getenv("IMDS_VM_NAME")
+	saName := os.Getenv("IMDS_SA_NAME")
+	listenAddr := getEnvOrDefault("IMDS_LISTEN_ADDR", "169.254.169.254:80")
+	userData := os.Getenv("IMDS_USER_DATA")
+
+	if namespace == "" {
+		return fmt.Errorf("IMDS_NAMESPACE is required")
+	}
+
+	server := imds.NewServer(tokenPath, namespace, vmName, saName, listenAddr, userData)
 	return server.Run(ctx)
 }
 
@@ -142,8 +146,35 @@ func runAll() error {
 
 	log.Printf("Successfully ensured veth pair attached to bridge %s", bridgeName)
 
-	// Now run the server
-	return runServe()
+	// Start ARP responder for link-local IMDS access
+	// This allows VMs with only link-local addresses (no DHCP) to reach IMDS
+	arpResponder, err := network.NewARPResponder(bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to create ARP responder: %w", err)
+	}
+
+	// Set up context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
+		log.Printf("Received signal %v, shutting down...", sig)
+		cancel()
+	}()
+
+	// Run ARP responder in background
+	go func() {
+		if err := arpResponder.Run(ctx); err != nil && err != context.Canceled {
+			log.Printf("ARP responder error: %v", err)
+		}
+	}()
+
+	// Run the HTTP server
+	return runServeWithContext(ctx)
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

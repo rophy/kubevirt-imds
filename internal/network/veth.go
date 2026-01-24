@@ -3,6 +3,8 @@ package network
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 
 	"github.com/vishvananda/netlink"
 )
@@ -75,6 +77,16 @@ func SetupVeth(bridgeName string) error {
 		return fmt.Errorf("failed to bring up %s: %w", VethIMDS, err)
 	}
 
+	// Add route for link-local subnet via veth-imds so we can respond to VMs
+	if err := addLinkLocalRoute(vethIMDS); err != nil {
+		return err
+	}
+
+	// Configure sysctl to allow traffic from VMs
+	if err := configureSysctl(VethIMDS); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -137,6 +149,16 @@ func EnsureVeth(bridgeName string) error {
 		return fmt.Errorf("failed to bring up %s: %w", VethIMDS, err)
 	}
 
+	// Add route for link-local subnet via veth-imds so we can respond to VMs
+	if err := addLinkLocalRoute(vethIMDS); err != nil {
+		return err
+	}
+
+	// Configure sysctl to allow traffic from VMs
+	if err := configureSysctl(VethIMDS); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -170,6 +192,45 @@ func ensureIPAddress(link netlink.Link) error {
 	// IP not found, add it
 	if err := netlink.AddrAdd(link, expectedAddr); err != nil {
 		return fmt.Errorf("failed to add address %s to %s: %w", IMDSAddress, link.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+// addLinkLocalRoute adds a route for the link-local subnet (169.254.0.0/16) via the interface.
+// This allows the IMDS server to respond to VMs with link-local addresses.
+func addLinkLocalRoute(link netlink.Link) error {
+	_, linkLocalNet, _ := net.ParseCIDR("169.254.0.0/16")
+	route := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       linkLocalNet,
+		Scope:     netlink.SCOPE_LINK,
+	}
+
+	// Use RouteReplace to handle the case where the route already exists
+	if err := netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("failed to add link-local route via %s: %w", link.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+// configureSysctl sets sysctl parameters needed for IMDS traffic from VMs.
+// This disables reverse path filtering so packets from VMs with link-local
+// addresses are not dropped.
+func configureSysctl(ifName string) error {
+	// Disable rp_filter (reverse path filtering) on the interface.
+	// Linux uses the MAX of interface-specific and "all" values, so we must
+	// disable both to fully disable rp_filter for this interface.
+	paths := []string{
+		filepath.Join("/proc/sys/net/ipv4/conf", ifName, "rp_filter"),
+		"/proc/sys/net/ipv4/conf/all/rp_filter",
+	}
+
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("0"), 0644); err != nil {
+			return fmt.Errorf("failed to disable rp_filter (%s): %w", path, err)
+		}
 	}
 
 	return nil

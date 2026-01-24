@@ -64,12 +64,15 @@ func (m *Mutator) ShouldMutate(pod *corev1.Pod) bool {
 		return false
 	}
 
-	// Check if this is a virt-launcher pod (has kubevirt.io/domain label)
+	// Check if this is a virt-launcher pod
+	// KubeVirt < 1.7 uses "kubevirt.io/domain", KubeVirt >= 1.7 uses "vm.kubevirt.io/name"
 	if pod.Labels == nil {
 		return false
 	}
 	if _, ok := pod.Labels["kubevirt.io/domain"]; !ok {
-		return false
+		if _, ok := pod.Labels["vm.kubevirt.io/name"]; !ok {
+			return false
+		}
 	}
 
 	return true
@@ -79,8 +82,11 @@ func (m *Mutator) ShouldMutate(pod *corev1.Pod) bool {
 func (m *Mutator) Mutate(pod *corev1.Pod) ([]PatchOperation, error) {
 	var patches []PatchOperation
 
-	// Get VM name from label
+	// Get VM name from label (try both old and new label)
 	vmName := pod.Labels["kubevirt.io/domain"]
+	if vmName == "" {
+		vmName = pod.Labels["vm.kubevirt.io/name"]
+	}
 
 	// Get optional configuration from annotations
 	bridgeName := ""
@@ -151,11 +157,13 @@ func (m *Mutator) createServerContainer(namespace, vmName, bridgeName, userData 
 		env = append(env, corev1.EnvVar{Name: "IMDS_USER_DATA", Value: userData})
 	}
 
-	// Override pod-level security context to allow NET_ADMIN to work.
+	// Override pod-level security context to allow network setup.
 	// virt-launcher pods enforce runAsNonRoot: true and runAsUser: 107,
-	// but NET_ADMIN requires root to create veth pairs.
+	// but we need root for: creating veth pairs, raw sockets for ARP,
+	// and writing sysctl settings (rp_filter).
 	runAsNonRoot := false
 	runAsUser := int64(0)
+	privileged := true
 
 	return corev1.Container{
 		Name:            ContainerName,
@@ -166,9 +174,7 @@ func (m *Mutator) createServerContainer(namespace, vmName, bridgeName, userData 
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: &runAsNonRoot,
 			RunAsUser:    &runAsUser,
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{"NET_ADMIN"},
-			},
+			Privileged:   &privileged,
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
