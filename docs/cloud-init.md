@@ -262,6 +262,62 @@ annotations:
 
 Add `/v1/vendor-data` endpoint for operator-provided configuration that supplements user-data.
 
+### Static Network Configuration
+
+Currently, `/v1/network-config` returns 404, causing cloud-init to fall back to DHCP. For environments without DHCP (e.g., bridge mode with static IPs, SR-IOV), static network configuration would be needed.
+
+**Linux (cloud-init NoCloud)**:
+
+Implement `/v1/network-config` returning cloud-init network config v2 format:
+
+```yaml
+version: 2
+ethernets:
+  eth0:
+    match:
+      macaddress: "52:54:00:12:34:56"
+    addresses:
+      - 10.0.2.2/24
+    gateway4: 10.0.2.1
+    nameservers:
+      addresses:
+        - 8.8.8.8
+```
+
+**Windows (cloudbase-init)**:
+
+Cloudbase-init uses OpenStack-style endpoints, not NoCloud. Would require:
+
+1. Add `/openstack/latest/meta_data.json` endpoint (JSON format)
+2. Add `/openstack/latest/network_data.json` endpoint:
+
+```json
+{
+  "links": [
+    {"id": "eth0", "type": "phy", "ethernet_mac_address": "52:54:00:12:34:56"}
+  ],
+  "networks": [
+    {"id": "network0", "link": "eth0", "type": "ipv4", "ip_address": "10.0.2.2", "netmask": "255.255.255.0", "gateway": "10.0.2.1"}
+  ],
+  "services": [
+    {"type": "dns", "address": "8.8.8.8"}
+  ]
+}
+```
+
+**Implementation approach**:
+
+For masquerade mode (most common), network topology is fixed:
+- VM IP: `10.0.2.2/24`
+- Gateway: `10.0.2.1`
+- The sidecar can discover MAC address by inspecting the bridge's tap interface
+
+For bridge/SR-IOV modes, the sidecar would need:
+- Access to libvirt domain XML (contains MAC addresses)
+- Network config passed via annotation or discovered from VM spec
+
+This is technically feasible since the sidecar runs in the same pod and can inspect network interfaces at runtime.
+
 ## References
 
 - [Cloud-Init NoCloud Documentation](https://cloudinit.readthedocs.io/en/latest/reference/datasources/nocloud.html)
