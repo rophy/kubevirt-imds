@@ -25,10 +25,12 @@ const (
 // ARPResponder listens for ARP requests on a bridge interface and responds
 // to requests for the IMDS IP address (169.254.169.254).
 // This enables VMs with only link-local addresses to reach IMDS via L2.
+// For security, it only responds to requests from the VM's MAC address.
 type ARPResponder struct {
 	bridgeName string
 	imdsIP     net.IP
 	imdsMAC    net.HardwareAddr
+	vmMAC      net.HardwareAddr // Only respond to this MAC
 	fd         int
 	mu         sync.Mutex
 	running    bool
@@ -36,8 +38,8 @@ type ARPResponder struct {
 
 // NewARPResponder creates a new ARP responder for the given bridge.
 // It will respond to ARP requests for the IMDS IP using the MAC address
-// of the veth-imds interface.
-func NewARPResponder(bridgeName string) (*ARPResponder, error) {
+// of the veth-imds interface. Only requests from vmMAC are answered.
+func NewARPResponder(bridgeName string, vmMAC net.HardwareAddr) (*ARPResponder, error) {
 	// Get the MAC address of veth-imds
 	vethIMDS, err := netlink.LinkByName(VethIMDS)
 	if err != nil {
@@ -49,10 +51,15 @@ func NewARPResponder(bridgeName string) (*ARPResponder, error) {
 		return nil, fmt.Errorf("%s has no MAC address", VethIMDS)
 	}
 
+	if len(vmMAC) == 0 {
+		return nil, fmt.Errorf("vmMAC is required for security filtering")
+	}
+
 	return &ARPResponder{
 		bridgeName: bridgeName,
 		imdsIP:     net.ParseIP(IMDSAddress).To4(),
 		imdsMAC:    imdsMAC,
+		vmMAC:      vmMAC,
 	}, nil
 }
 
@@ -159,6 +166,13 @@ func (a *ARPResponder) handlePacket(fd int, packet []byte, ifindex int) {
 		return
 	}
 
+	// Security check: only respond to requests from the VM's MAC
+	if !macEqual(senderMAC, a.vmMAC) {
+		log.Printf("ARP request for %s from unauthorized MAC %s (expected %s), ignoring",
+			targetIP, senderMAC, a.vmMAC)
+		return
+	}
+
 	log.Printf("ARP request for %s from %s (%s)", targetIP, senderIP, senderMAC)
 
 	// Build ARP reply
@@ -222,4 +236,17 @@ func (a *ARPResponder) Stop() {
 // htons converts a uint16 from host to network byte order.
 func htons(v uint16) uint16 {
 	return (v << 8) | (v >> 8)
+}
+
+// macEqual compares two MAC addresses for equality.
+func macEqual(a, b net.HardwareAddr) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

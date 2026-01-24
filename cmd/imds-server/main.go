@@ -146,9 +146,17 @@ func runAll() error {
 
 	log.Printf("Successfully ensured veth pair attached to bridge %s", bridgeName)
 
+	// Discover VM's MAC address from the tap device on the bridge
+	vmMAC, err := network.DiscoverVMMAC(bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to discover VM MAC: %w", err)
+	}
+	log.Printf("Discovered VM MAC: %s", vmMAC)
+
 	// Start ARP responder for link-local IMDS access
 	// This allows VMs with only link-local addresses (no DHCP) to reach IMDS
-	arpResponder, err := network.NewARPResponder(bridgeName)
+	// Only responds to requests from the VM's MAC for security
+	arpResponder, err := network.NewARPResponder(bridgeName, vmMAC)
 	if err != nil {
 		return fmt.Errorf("failed to create ARP responder: %w", err)
 	}

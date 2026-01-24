@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 )
@@ -213,6 +214,37 @@ func addLinkLocalRoute(link netlink.Link) error {
 	}
 
 	return nil
+}
+
+// DiscoverVMMAC finds the VM's MAC address by looking for the tap device on the bridge.
+// KubeVirt creates tap devices with names like "tap<hash>" for VM network interfaces.
+func DiscoverVMMAC(bridgeName string) (net.HardwareAddr, error) {
+	bridge, err := netlink.LinkByName(bridgeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bridge %s: %w", bridgeName, err)
+	}
+
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list links: %w", err)
+	}
+
+	for _, link := range links {
+		// Must be attached to our bridge
+		if link.Attrs().MasterIndex != bridge.Attrs().Index {
+			continue
+		}
+
+		// Look for tap device (KubeVirt names them "tap<hash>")
+		if strings.HasPrefix(link.Attrs().Name, "tap") {
+			mac := link.Attrs().HardwareAddr
+			if len(mac) > 0 {
+				return mac, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no tap device found on bridge %s", bridgeName)
 }
 
 // configureSysctl sets sysctl parameters needed for IMDS traffic from VMs.
