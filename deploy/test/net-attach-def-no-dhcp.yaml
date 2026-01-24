@@ -1,0 +1,17 @@
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: no-dhcp-net
+  namespace: kubevirt
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "no-dhcp-net",
+      "type": "bridge",
+      "bridge": "br-nodhcp",
+      "isGateway": false,
+      "ipMasq": false,
+      "hairpinMode": true,
+      "ipam": {}
+    }
