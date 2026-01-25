@@ -159,6 +159,25 @@ func (s *Server) handleNetworkConfig(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// handleOpenStackUserData handles GET /openstack/latest/user_data
+// This provides compatibility with cloudbase-init on Windows.
+// Returns raw user-data (PowerShell script, batch file, or cloud-config).
+func (s *Server) handleOpenStackUserData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.UserData == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(s.UserData))
+}
+
 // handleOpenStackMetaData handles GET /openstack/latest/meta_data.json
 // This provides compatibility with cloudbase-init on Windows.
 func (s *Server) handleOpenStackMetaData(w http.ResponseWriter, r *http.Request) {
