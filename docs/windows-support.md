@@ -358,7 +358,7 @@ Testing with the Cloudbase-provided Windows Server 2012 R2 evaluation image reve
 | IMDS user_data fetch | ✅ Working | cloudbase-init fetches `/openstack/latest/user_data` |
 | Password via `admin_pass` | ❌ Not working | Image lacks `inject_user_password=true` |
 | Password via user-data script | ⚠️ Partial | Image processes user-data but doesn't execute PowerShell scripts |
-| cloudbase-init.conf location | ❓ Unknown | Not at standard path (`C:\Program Files\Cloudbase Solutions\...`) |
+| cloudbase-init.conf location | ❌ Not found | Not at `C:\Program Files\Cloudbase Solutions\...` or `C:\Program Files (x86)\Cloudbase Solutions\...` |
 
 **Key Findings:**
 
