@@ -30,6 +30,14 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// OpenStackMetaData is the response for /openstack/latest/meta_data.json
+// This provides compatibility with cloudbase-init on Windows.
+type OpenStackMetaData struct {
+	UUID     string `json:"uuid"`
+	Hostname string `json:"hostname"`
+	Name     string `json:"name"`
+}
+
 // handleHealthz handles GET /healthz
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -149,6 +157,26 @@ func (s *Server) handleNetworkConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Return 404 - cloud-init will fall back to DHCP
 	http.NotFound(w, r)
+}
+
+// handleOpenStackMetaData handles GET /openstack/latest/meta_data.json
+// This provides compatibility with cloudbase-init on Windows.
+func (s *Server) handleOpenStackMetaData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Generate instance UUID: namespace-vmname for cluster-wide uniqueness
+	instanceUUID := fmt.Sprintf("%s-%s", s.Namespace, s.VMName)
+
+	resp := OpenStackMetaData{
+		UUID:     instanceUUID,
+		Hostname: s.VMName,
+		Name:     s.VMName,
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // parseJWTExpiration extracts the expiration time from a JWT token.

@@ -57,6 +57,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/v1/meta-data", s.handleMetaData)
 	mux.HandleFunc("/v1/user-data", s.handleUserData)
 	mux.HandleFunc("/v1/network-config", s.handleNetworkConfig)
+	// OpenStack endpoints (for cloudbase-init on Windows)
+	mux.HandleFunc("/openstack/latest/meta_data.json", s.handleOpenStackMetaData)
 
 	s.server = &http.Server{
 		Addr:           s.ListenAddr,
@@ -105,11 +107,13 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 // (cloud-init NoCloud datasource cannot send custom headers).
 func (s *Server) metadataHeaderMiddleware(next http.Handler) http.Handler {
 	// Paths exempt from header requirement
+	// These are used by cloud-init/cloudbase-init which cannot send custom headers
 	exemptPaths := map[string]bool{
-		"/healthz":           true,
-		"/v1/meta-data":      true,
-		"/v1/user-data":      true,
-		"/v1/network-config": true,
+		"/healthz":                        true,
+		"/v1/meta-data":                   true,
+		"/v1/user-data":                   true,
+		"/v1/network-config":              true,
+		"/openstack/latest/meta_data.json": true,
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
