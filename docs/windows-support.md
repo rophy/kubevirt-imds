@@ -448,22 +448,23 @@ Testing with the Cloudbase-provided Windows Server 2012 R2 evaluation image reve
 |---------|--------|-------|
 | IMDS metadata fetch | ✅ Working | cloudbase-init fetches `/openstack/latest/meta_data.json` |
 | IMDS user_data fetch | ✅ Working | cloudbase-init fetches `/openstack/latest/user_data` |
-| Password via `admin_pass` | ❌ Not working | Image lacks `inject_user_password=true` |
-| Password via user-data script | ⚠️ Partial | Image processes user-data but doesn't execute PowerShell scripts |
-| cloudbase-init.conf location | ❌ Not found | Not at `C:\Program Files\Cloudbase Solutions\...` or `C:\Program Files (x86)\Cloudbase Solutions\...` |
-| cloudbase-init service | ✅ Running | Confirmed by IMDS logs showing OpenStack metadata requests |
+| Password via `admin_pass` | ⚠️ Partial | Sets password for `Admin` user (not `Administrator`) |
+| Password via user-data script | ❌ Not working | `UserDataPlugin` not in default plugins list |
+| cloudbase-init.conf location | ✅ Found | `C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf` |
+| cloudbase-init service | ✅ Running | Service runs at boot, then stops after initialization |
 
 **Key Findings:**
 
-1. **Without user-data annotation**: Windows shows 2-field password change screen (New password + Confirm)
-2. **With user-data annotation**: Windows shows 3-field password change screen (Current password + New password + Confirm)
-3. **Cloudbase-init IS running**: IMDS logs show requests to `/openstack/latest/meta_data.json` and `/openstack/2013-04-04/meta_data.json`
-4. **Non-standard installation**: Cloudbase-init is running but not installed at the standard Windows paths
+1. **Cloudbase-init IS at standard path**: `C:\Program Files\Cloudbase Solutions\Cloudbase-Init`
+2. **Creates `Admin` user** (not `Administrator`): Config has `username=Admin` and `inject_user_password=true`
+3. **WinRM auto-configured**: Cloudbase-init configures WinRM HTTPS listener automatically
+4. **API version issue**: IMDS returns 400 for `/openstack/2013-04-04/meta_data.json` - only `/latest/` is supported
+5. **UserDataPlugin not enabled**: The unattend config only has MTUPlugin, SetHostNamePlugin, ExtendVolumesPlugin
 
-This indicates cloudbase-init IS processing the user-data and setting some password, but:
-- The `UserDataPlugin` for PowerShell script execution is likely disabled
-- The password set is unknown (possibly derived from user-data content)
-- The installation location is non-standard (possibly embedded in the image)
+This indicates cloudbase-init IS processing metadata and setting passwords for the `Admin` user, but:
+- The `UserDataPlugin` for PowerShell script execution is not in the default plugins list
+- IMDS needs to support older OpenStack API versions (2013-04-04) for full compatibility
+- Password is set for `Admin` user, not `Administrator`
 
 **Recommendation**: For production use, build custom Windows images with properly configured cloudbase-init at the standard installation path.
 
