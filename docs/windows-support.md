@@ -451,42 +451,44 @@ Testing with the Cloudbase-provided Windows Server 2012 R2 evaluation image reve
 | Password via `admin_pass` | ❌ Not working | Image lacks `inject_user_password=true` |
 | Password via user-data script | ⚠️ Partial | Image processes user-data but doesn't execute PowerShell scripts |
 | cloudbase-init.conf location | ❌ Not found | Not at `C:\Program Files\Cloudbase Solutions\...` or `C:\Program Files (x86)\Cloudbase Solutions\...` |
+| cloudbase-init service | ✅ Running | Confirmed by IMDS logs showing OpenStack metadata requests |
 
 **Key Findings:**
 
 1. **Without user-data annotation**: Windows shows 2-field password change screen (New password + Confirm)
 2. **With user-data annotation**: Windows shows 3-field password change screen (Current password + New password + Confirm)
+3. **Cloudbase-init IS running**: IMDS logs show requests to `/openstack/latest/meta_data.json` and `/openstack/2013-04-04/meta_data.json`
+4. **Non-standard installation**: Cloudbase-init is running but not installed at the standard Windows paths
 
 This indicates cloudbase-init IS processing the user-data and setting some password, but:
 - The `UserDataPlugin` for PowerShell script execution is likely disabled
 - The password set is unknown (possibly derived from user-data content)
+- The installation location is non-standard (possibly embedded in the image)
 
 **Recommendation**: For production use, build custom Windows images with properly configured cloudbase-init at the standard installation path.
 
 ## Current Status
 
-**Status: Awaiting manual image download**
+**Status: ✅ IMDS Working with Windows VMs**
 
-Windows VM testing requires a pre-built image with WinRM enabled for headless testing. The recommended Cloudbase image requires manual download due to EULA acceptance and reCAPTCHA verification that cannot be automated.
+Testing confirmed that IMDS works correctly with Windows VMs:
+- **Masquerade mode**: VM reaches IMDS via gateway routing
+- **Bridge mode (Multus)**: VM reaches IMDS via ARP responder for link-local addresses
 
-### Next Steps
+### Verified Functionality
 
-1. Manually download Cloudbase Windows Server 2012 R2 image from https://cloudbase.it/windows-cloud-images/
-2. Save to `tmp/windows_server_2012_r2_standard_eval_kvm.qcow2.gz`
-3. Follow the "Extract and Build Container Disk" steps above
-4. Deploy VM and test IMDS endpoints
+| Mode | Network | IMDS Access | Notes |
+|------|---------|-------------|-------|
+| Masquerade | KubeVirt default | ✅ Working | VM IP: 10.0.2.2, routes through gateway |
+| Bridge (Multus) | NAD with bridge CNI | ✅ Working | Uses ARP responder for 169.254.169.254 |
 
-### Alternative: Test from Pod Namespace
-
-IMDS can be tested from the pod's network namespace without logging into Windows:
+### Test Commands
 
 ```bash
-# Get the virt-launcher pod
-POD=$(kubectl get pod -n kubevirt -l vm.kubevirt.io/name=<vm-name> \
+# Test IMDS from inside the pod (works for both modes)
+POD=$(kubectl --context kind-kind get pods -n kubevirt -l vm.kubevirt.io/name=<vm-name> \
   -o jsonpath='{.items[0].metadata.name}')
-
-# Test IMDS from compute container (same network namespace as VM)
-kubectl exec -n kubevirt $POD -c compute -- \
+kubectl --context kind-kind exec -n kubevirt $POD -c compute -- \
   curl -sf -H "Metadata: true" http://169.254.169.254/v1/identity
 ```
 
