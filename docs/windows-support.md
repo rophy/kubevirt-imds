@@ -6,6 +6,25 @@ This document describes how to test IMDS with Windows VMs in KubeVirt.
 
 KubeVirt IMDS supports Windows VMs. The IMDS sidecar is injected into the virt-launcher pod and provides the same endpoints to Windows guests as it does to Linux guests.
 
+## Important: Enable WinRM First
+
+**VNC is unreliable for Windows VM management.** The `vncdo` tool has significant issues with special characters:
+
+| Character | VNC Types As | Impact |
+|-----------|--------------|--------|
+| `:` | `;` | Breaks file paths (`C:\` → `C;\`) |
+| `@` | `2` | Breaks PowerShell hashtables and winrm commands |
+| `*` | `8` | Breaks wildcards in searches |
+| `\|` | `\` | Breaks command pipes |
+| `()` | `90` | Breaks paths like `Program Files (x86)` |
+
+**Best Practice:** Use VNC only for the minimum steps to enable WinRM, then do everything else via WinRM:
+
+1. Set initial Administrator password (use simple password without special characters)
+2. Run `Enable-PSRemoting -Force`
+3. Enable `AllowUnencrypted` for HTTP access (see [Enabling WinRM](#enabling-winrm-for-remote-management))
+4. **All other operations should use WinRM**
+
 ## Preparing a Windows Image
 
 ### Option 1: Official Microsoft Evaluation VHD (Recommended)
@@ -300,95 +319,135 @@ kubectl rollout restart deployment/imds-webhook -n kubevirt-imds
 
 ## Enabling WinRM for Remote Management
 
-WinRM (Windows Remote Management) provides reliable remote access to Windows VMs, which is more stable than VNC for automation.
+WinRM (Windows Remote Management) provides reliable remote access to Windows VMs. **This should be your first priority** after deploying a Windows VM.
 
-### Step 1: Initial Login via VNC
+### Step 1: Set Password via VNC
 
-For a fresh Windows VM, you must first login via VNC to set the Administrator password:
+For a fresh Windows VM, use VNC to set the Administrator password. **Use a simple password without special characters** (e.g., `Password123`) to avoid VNC typing issues:
 
 ```bash
 # Start VNC proxy
 virtctl --context kind-kind vnc <vm-name> -n kubevirt --proxy-only --port 5901 &
-sleep 3
+sleep 4
 
-# Wake screen and send Ctrl+Alt+Del
-vncdo -s 127.0.0.1::5901 key ctrl-alt-del
-sleep 3
+# Type password in both fields and submit (single vncdo command is more reliable)
+vncdo -s 127.0.0.1::5901 type "Password123" key tab type "Password123" key enter
 
-# Take screenshot to see login screen
-virtctl --context kind-kind vnc screenshot <vm-name> -n kubevirt --file=/tmp/win-login.png
+# Take screenshot to verify
+virtctl --context kind-kind vnc screenshot <vm-name> -n kubevirt --file=/tmp/win-screen.png
 ```
 
-Navigate through the Windows login screen using VNC to set the initial Administrator password.
+### Step 2: Enable WinRM via VNC
 
-### Step 2: Enable WinRM via PowerShell
+Open PowerShell using Windows+R:
 
-Once logged in, open PowerShell (as Administrator) and run:
-
-```powershell
-# Enable PowerShell Remoting (configures WinRM)
-Enable-PSRemoting -Force
-```
-
-This command:
-- Starts the WinRM service
-- Sets it to start automatically
-- Creates a firewall rule for WinRM
-- Configures LocalAccountTokenFilterPolicy for remote admin access
-
-### Step 3: Verify WinRM is Running
-
-From inside the VM:
-```powershell
-# Check WinRM service status
-Get-Service WinRM
-
-# Test WinRM listener
-winrm enumerate winrm/config/listener
-```
-
-### Step 4: Test Connectivity from Pod
-
-Get the VM's IP address from IMDS logs:
 ```bash
-kubectl --context kind-kind logs -n kubevirt <virt-launcher-pod> -c imds-server | grep "ARP request"
-# Look for: ARP request for 169.254.169.254 from <VM-IP>
+virtctl --context kind-kind vnc <vm-name> -n kubevirt --proxy-only --port 5901 &
+sleep 4
+vncdo -s 127.0.0.1::5901 key super-r
+sleep 2
+vncdo -s 127.0.0.1::5901 type "powershell" key enter
+sleep 3
+vncdo -s 127.0.0.1::5901 type "Enable-PSRemoting -Force" key enter
 ```
 
-Test WinRM port from the compute container:
+### Step 3: Enable AllowUnencrypted (for HTTP access)
+
+Since VNC mangles special characters, use base64-encoded PowerShell commands:
+
 ```bash
-POD=$(kubectl --context kind-kind get pods -n kubevirt -l vm.kubevirt.io/name=<vm-name> -o jsonpath='{.items[0].metadata.name}')
+# Generate base64-encoded command
+CMD='Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true'
+ENCODED=$(echo -n "$CMD" | iconv -t UTF-16LE | base64 -w0)
 
-# Test port connectivity
-kubectl --context kind-kind exec -n kubevirt $POD -c compute -- nc -zv <VM-IP> 5985
+# Run via VNC
+virtctl --context kind-kind vnc <vm-name> -n kubevirt --proxy-only --port 5901 &
+sleep 4
+vncdo -s 127.0.0.1::5901 type "powershell -EncodedCommand $ENCODED" key enter
+```
 
-# Test HTTP response (405 = WinRM is responding)
-kubectl --context kind-kind exec -n kubevirt $POD -c compute -- curl -s -o /dev/null -w "%{http_code}" http://<VM-IP>:5985/wsman
+### Step 4: Set Up TCP Tunnel
+
+The VM's IP (e.g., `10.0.2.2` in masquerade mode) is only reachable from within the pod. Create a tunnel:
+
+```python
+#!/usr/bin/env python3
+# Save as winrm_tunnel.py
+import asyncio
+
+LOCAL_PORT = 15985
+VM_IP = "10.0.2.2"  # Masquerade mode VM IP
+KUBECTL_CMD = [
+    "kubectl", "--context", "kind-kind", "exec", "-n", "kubevirt",
+    "<virt-launcher-pod>", "-c", "compute", "-i", "--",
+    "nc", VM_IP, "5985"
+]
+
+async def handle_client(reader, writer):
+    proc = await asyncio.create_subprocess_exec(
+        *KUBECTL_CMD,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+    )
+    async def forward_to_proc():
+        try:
+            while data := await reader.read(4096):
+                proc.stdin.write(data)
+                await proc.stdin.drain()
+        finally:
+            proc.stdin.close()
+    async def forward_from_proc():
+        try:
+            while data := await proc.stdout.read(4096):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+    await asyncio.gather(forward_to_proc(), forward_from_proc())
+
+async def main():
+    server = await asyncio.start_server(handle_client, '127.0.0.1', LOCAL_PORT)
+    print(f"Listening on 127.0.0.1:{LOCAL_PORT}")
+    async with server:
+        await server.serve_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Run the tunnel:
+```bash
+python3 winrm_tunnel.py &
 ```
 
 ### Step 5: Connect via WinRM
 
-Using Python (pywinrm):
+```bash
+# Install pywinrm
+pip install pywinrm
+```
+
 ```python
 import winrm
 
-session = winrm.Session('<VM-IP>', auth=('Administrator', '<password>'))
-result = session.run_ps('Get-ComputerInfo | Select-Object WindowsProductName')
-print(result.std_out.decode())
-```
+# Connect through the tunnel
+session = winrm.Session('127.0.0.1:15985', auth=('Administrator', 'Password123'), transport='basic')
 
-Using PowerShell from another Windows machine:
-```powershell
-$cred = Get-Credential
-Enter-PSSession -ComputerName <VM-IP> -Credential $cred
+# Run commands
+result = session.run_ps('hostname')
+print(result.std_out.decode())
+
+# Search for files
+result = session.run_ps('Get-ChildItem -Path C:\\ -Recurse -Directory -Filter "*cloudbase*" -ErrorAction SilentlyContinue')
+print(result.std_out.decode())
 ```
 
 ### WinRM Ports
 
 | Port | Protocol | Description |
 |------|----------|-------------|
-| 5985 | HTTP | WinRM default (unencrypted) |
-| 5986 | HTTPS | WinRM over TLS (requires certificate) |
+| 5985 | HTTP | WinRM default (requires `AllowUnencrypted=true`) |
+| 5986 | HTTPS | WinRM over TLS (configured by cloudbase-init) |
 
 ## OpenStack Metadata Endpoints (cloudbase-init)
 
