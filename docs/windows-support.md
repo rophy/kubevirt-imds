@@ -298,6 +298,98 @@ kubectl rollout restart deployment/imds-webhook -n kubevirt-imds
 - Use `bus: sata` for disk if VirtIO drivers are not installed
 - Check VM console: `virtctl console <vm-name>`
 
+## Enabling WinRM for Remote Management
+
+WinRM (Windows Remote Management) provides reliable remote access to Windows VMs, which is more stable than VNC for automation.
+
+### Step 1: Initial Login via VNC
+
+For a fresh Windows VM, you must first login via VNC to set the Administrator password:
+
+```bash
+# Start VNC proxy
+virtctl --context kind-kind vnc <vm-name> -n kubevirt --proxy-only --port 5901 &
+sleep 3
+
+# Wake screen and send Ctrl+Alt+Del
+vncdo -s 127.0.0.1::5901 key ctrl-alt-del
+sleep 3
+
+# Take screenshot to see login screen
+virtctl --context kind-kind vnc screenshot <vm-name> -n kubevirt --file=/tmp/win-login.png
+```
+
+Navigate through the Windows login screen using VNC to set the initial Administrator password.
+
+### Step 2: Enable WinRM via PowerShell
+
+Once logged in, open PowerShell (as Administrator) and run:
+
+```powershell
+# Enable PowerShell Remoting (configures WinRM)
+Enable-PSRemoting -Force
+```
+
+This command:
+- Starts the WinRM service
+- Sets it to start automatically
+- Creates a firewall rule for WinRM
+- Configures LocalAccountTokenFilterPolicy for remote admin access
+
+### Step 3: Verify WinRM is Running
+
+From inside the VM:
+```powershell
+# Check WinRM service status
+Get-Service WinRM
+
+# Test WinRM listener
+winrm enumerate winrm/config/listener
+```
+
+### Step 4: Test Connectivity from Pod
+
+Get the VM's IP address from IMDS logs:
+```bash
+kubectl --context kind-kind logs -n kubevirt <virt-launcher-pod> -c imds-server | grep "ARP request"
+# Look for: ARP request for 169.254.169.254 from <VM-IP>
+```
+
+Test WinRM port from the compute container:
+```bash
+POD=$(kubectl --context kind-kind get pods -n kubevirt -l vm.kubevirt.io/name=<vm-name> -o jsonpath='{.items[0].metadata.name}')
+
+# Test port connectivity
+kubectl --context kind-kind exec -n kubevirt $POD -c compute -- nc -zv <VM-IP> 5985
+
+# Test HTTP response (405 = WinRM is responding)
+kubectl --context kind-kind exec -n kubevirt $POD -c compute -- curl -s -o /dev/null -w "%{http_code}" http://<VM-IP>:5985/wsman
+```
+
+### Step 5: Connect via WinRM
+
+Using Python (pywinrm):
+```python
+import winrm
+
+session = winrm.Session('<VM-IP>', auth=('Administrator', '<password>'))
+result = session.run_ps('Get-ComputerInfo | Select-Object WindowsProductName')
+print(result.std_out.decode())
+```
+
+Using PowerShell from another Windows machine:
+```powershell
+$cred = Get-Credential
+Enter-PSSession -ComputerName <VM-IP> -Credential $cred
+```
+
+### WinRM Ports
+
+| Port | Protocol | Description |
+|------|----------|-------------|
+| 5985 | HTTP | WinRM default (unencrypted) |
+| 5986 | HTTPS | WinRM over TLS (requires certificate) |
+
 ## OpenStack Metadata Endpoints (cloudbase-init)
 
 KubeVirt IMDS provides OpenStack-compatible metadata endpoints for cloudbase-init on Windows:
