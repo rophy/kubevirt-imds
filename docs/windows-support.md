@@ -512,13 +512,20 @@ Testing with the Cloudbase-provided Windows Server 2012 R2 evaluation image reve
 | cloudbase-init.conf location | ✅ Found | `C:\Program Files\Cloudbase Solutions\Cloudbase-Init\conf\cloudbase-init.conf` |
 | cloudbase-init service | ✅ Running | Service runs at boot, then stops after initialization |
 
+**Actual config files from the Cloudbase image:**
+- [cloudbase-init.conf](cloudbase-init.conf) - main configuration (no plugins specified, uses defaults)
+- [cloudbase-init-unattend.conf](cloudbase-init-unattend.conf) - runs during Windows setup (limited plugins)
+
 **Key Findings:**
 
 1. **Cloudbase-init IS at standard path**: `C:\Program Files\Cloudbase Solutions\Cloudbase-Init`
 2. **Creates `Admin` user** (not `Administrator`): Config has `username=Admin` and `inject_user_password=true`
 3. **WinRM auto-configured**: Cloudbase-init configures WinRM HTTPS listener automatically
 4. **API version issue**: IMDS returns 400 for `/openstack/2013-04-04/meta_data.json` - only `/latest/` is supported
-5. **UserDataPlugin not enabled**: The unattend config only has MTUPlugin, SetHostNamePlugin, ExtendVolumesPlugin
+5. **UserDataPlugin not enabled**: The unattend config only has 3 plugins:
+   - `MTUPlugin`
+   - `SetHostNamePlugin`
+   - `ExtendVolumesPlugin`
 
 This indicates cloudbase-init IS processing metadata and setting passwords for the `Admin` user, but:
 - The `UserDataPlugin` for PowerShell script execution is not in the default plugins list
