@@ -1,6 +1,7 @@
 package network
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -216,19 +217,36 @@ func addLinkLocalRoute(link netlink.Link) error {
 	return nil
 }
 
+// networkStatusEntry represents an entry in the k8s.v1.cni.cncf.io/network-status annotation.
+type networkStatusEntry struct {
+	Name      string `json:"name"`
+	Interface string `json:"interface"`
+	MAC       string `json:"mac"`
+	Default   bool   `json:"default,omitempty"`
+}
+
 // DiscoverVMMAC finds the VM's MAC address.
 // For masquerade mode: VM uses pod's eth0 MAC (not tap device MAC)
-// For bridge mode: VM uses tap device MAC
-// This function tries eth0 first (masquerade), then falls back to tap device (bridge).
+// For bridge mode with Multus: VM MAC comes from network-status annotation
 func DiscoverVMMAC(bridgeName string) (net.HardwareAddr, error) {
-	// First try to get pod's eth0 MAC (for masquerade mode)
-	// In masquerade mode, the VM uses the same MAC as pod's eth0
-	eth0, err := netlink.LinkByName("eth0")
-	if err == nil && len(eth0.Attrs().HardwareAddr) > 0 {
-		return eth0.Attrs().HardwareAddr, nil
+	// Detect networking mode by bridge name:
+	// - Masquerade mode: bridge is "k6t-eth0" (VM shares pod's eth0 MAC)
+	// - Bridge mode: bridge is "k6t-<hash>" (VM uses MAC from network-status annotation)
+	if bridgeName == "k6t-eth0" {
+		// Masquerade mode: use pod's eth0 MAC
+		eth0, err := netlink.LinkByName("eth0")
+		if err == nil && len(eth0.Attrs().HardwareAddr) > 0 {
+			return eth0.Attrs().HardwareAddr, nil
+		}
+		// Fall through to other methods if eth0 not found
 	}
 
-	// Fall back to tap device MAC (for bridge mode)
+	// Bridge mode: try to get MAC from network-status annotation (via downward API)
+	if mac, err := discoverMACFromNetworkStatus(bridgeName); err == nil {
+		return mac, nil
+	}
+
+	// Fallback: use tap device MAC (legacy behavior)
 	bridge, err := netlink.LinkByName(bridgeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bridge %s: %w", bridgeName, err)
@@ -254,7 +272,43 @@ func DiscoverVMMAC(bridgeName string) (net.HardwareAddr, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no VM MAC found (tried eth0 and tap device on bridge %s)", bridgeName)
+	return nil, fmt.Errorf("no VM MAC found (tried eth0, network-status, and tap device on bridge %s)", bridgeName)
+}
+
+// discoverMACFromNetworkStatus reads the VM MAC from the network-status annotation.
+// This is available via downward API if the webhook injects the annotation file.
+func discoverMACFromNetworkStatus(bridgeName string) (net.HardwareAddr, error) {
+	// The bridge name is "k6t-<hash>" where <hash> matches the pod interface name "pod<hash>"
+	// For example: bridge "k6t-03b731d2111" corresponds to interface "pod03b731d2111"
+	if !strings.HasPrefix(bridgeName, "k6t-") {
+		return nil, fmt.Errorf("unexpected bridge name format: %s", bridgeName)
+	}
+	hash := strings.TrimPrefix(bridgeName, "k6t-")
+	podIfName := "pod" + hash
+
+	// Try to read network-status from downward API annotation file
+	annotationPath := "/etc/podinfo/network-status"
+	data, err := os.ReadFile(annotationPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read network-status annotation: %w", err)
+	}
+
+	var entries []networkStatusEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse network-status annotation: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Interface == podIfName && entry.MAC != "" {
+			mac, err := net.ParseMAC(entry.MAC)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse MAC %s: %w", entry.MAC, err)
+			}
+			return mac, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no MAC found for interface %s in network-status", podIfName)
 }
 
 // configureSysctl sets sysctl parameters needed for IMDS traffic from VMs.

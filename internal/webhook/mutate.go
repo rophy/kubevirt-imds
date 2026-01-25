@@ -18,8 +18,9 @@ const (
 	AnnotationUserData = "imds.kubevirt.io/user-data"
 
 	// Container and volume names
-	ContainerName   = "imds-server"
-	TokenVolumeName = "imds-token"
+	ContainerName      = "imds-server"
+	TokenVolumeName    = "imds-token"
+	PodInfoVolumeName  = "imds-podinfo"
 
 	// Default values
 	DefaultTokenPath       = "/var/run/secrets/tokens/token"
@@ -96,9 +97,13 @@ func (m *Mutator) Mutate(pod *corev1.Pod) ([]PatchOperation, error) {
 		userData = pod.Annotations[AnnotationUserData]
 	}
 
-	// Add projected ServiceAccount token volume
+	// Add projected ServiceAccount token volume for IMDS tokens
 	tokenVolume := m.createTokenVolume()
 	patches = append(patches, addVolume(pod, tokenVolume))
+
+	// Add downward API volume for pod info (network-status annotation)
+	podInfoVolume := m.createPodInfoVolume()
+	patches = append(patches, addVolume(pod, podInfoVolume))
 
 	// Add IMDS server container (runs init then serve in sequence)
 	// We don't use an init container because the VM bridge (k6t-*) is created
@@ -124,6 +129,27 @@ func (m *Mutator) createTokenVolume() corev1.Volume {
 						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
 							Path:              "token",
 							ExpirationSeconds: &expiration,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createPodInfoVolume creates the downward API volume for pod annotations.
+// This exposes the network-status annotation which contains the VM MAC address
+// for Multus bridge mode networking.
+func (m *Mutator) createPodInfoVolume() corev1.Volume {
+	return corev1.Volume{
+		Name: PodInfoVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			DownwardAPI: &corev1.DownwardAPIVolumeSource{
+				Items: []corev1.DownwardAPIVolumeFile{
+					{
+						Path: "network-status",
+						FieldRef: &corev1.ObjectFieldSelector{
+							FieldPath: "metadata.annotations['k8s.v1.cni.cncf.io/network-status']",
 						},
 					},
 				},
@@ -180,6 +206,11 @@ func (m *Mutator) createServerContainer(namespace, vmName, bridgeName, userData 
 			{
 				Name:      TokenVolumeName,
 				MountPath: "/var/run/secrets/tokens",
+				ReadOnly:  true,
+			},
+			{
+				Name:      PodInfoVolumeName,
+				MountPath: "/etc/podinfo",
 				ReadOnly:  true,
 			},
 		},
